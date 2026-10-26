@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile, readdir, stat } from 'node:fs/promises'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -35,7 +35,13 @@ const REQUIRED_FILES = [
   'README.md',
   'README.en.md',
   'MARKET.md',
+  'INSTALL.md',
+  'INSTALL.en.md',
+  'DEV.md',
+  'CHANGELOG.md',
   'LICENSE',
+  'scripts/deploy.mjs',
+  'scripts/hmr.mjs',
 ]
 
 const REQUIRED_PS1 = [
@@ -113,7 +119,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
   check(checks, 'manifest:no-dsh-peer', manifest.peerDependencies === undefined || manifest.peerDependencies?.dsh === undefined)
   const files = Array.isArray(manifest.files) ? manifest.files : []
   check(checks, 'manifest:files:lib', files.includes('lib'), JSON.stringify(files))
-  for (const required of ['cordis.patch.yml', 'README.md', 'README.en.md', 'MARKET.md', 'LICENSE']) {
+  for (const required of ['cordis.patch.yml', 'README.md', 'README.en.md', 'MARKET.md', 'INSTALL.md', 'INSTALL.en.md', 'DEV.md', 'CHANGELOG.md', 'LICENSE']) {
     check(checks, `manifest:files:${required}`, files.includes(required), JSON.stringify(files))
   }
   check(checks, 'manifest:no-install-script', manifest.scripts?.preinstall === undefined && manifest.scripts?.postinstall === undefined && manifest.scripts?.install === undefined)
@@ -226,6 +232,50 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     const text = await readFile(file, 'utf8')
     for (const rule of FORBIDDEN_SOURCE_PATTERNS) {
       check(checks, `source:forbidden:${rule.pattern.source}:${relative(root, file).split(sep).join('/')}`, !rule.pattern.test(text), rule.reason)
+    }
+  }
+
+  const deployPath = join(root, 'scripts/deploy.mjs')
+  if (await exists(deployPath)) {
+    const source = await readFile(deployPath, 'utf8')
+    check(checks, 'deploy:in-place-overwrite', /copyFileSync/.test(source) && !/rmSync\(\s*packageDir/.test(source), 'hmr only reacts to change events, so the sync must overwrite in place')
+    check(checks, 'deploy:bom-guard', /assertNoBom/.test(source))
+    check(checks, 'deploy:manifest-backup', /backup\(/.test(source))
+    check(checks, 'deploy:exact-version-pin', /json\.dependencies\[PACKAGE_NAME\] = version/.test(source))
+  }
+
+  const hmrPath = join(root, 'scripts/hmr.mjs')
+  if (await exists(hmrPath)) {
+    const source = await readFile(hmrPath, 'utf8')
+    check(checks, 'hmr:ignored-must-be-empty', /ignored: \[\]/.test(source), 'the default ignored glob excludes node_modules and would swallow the plugin')
+    check(checks, 'hmr:keeps-other-roots', /otherRoots/.test(source))
+    check(checks, 'hmr:no-set-content', !/Set-Content|Out-File/i.test(source))
+  }
+
+  const releaseWorkflow = join(root, '.github/workflows/release.yml')
+  if (await exists(releaseWorkflow)) {
+    const source = await readFile(releaseWorkflow, 'utf8')
+    check(checks, 'release:oidc-provenance', /id-token: write/.test(source) && /npm publish --provenance/.test(source))
+    check(checks, 'release:no-registry-url', !/registry-url:/.test(source), 'a generated authenticated .npmrc makes npm take the token path instead of OIDC (ENEEDAUTH)')
+    check(checks, 'release:no-committed-token', !/NPM_TOKEN/.test(source), 'publishing must not depend on a committed token')
+    check(checks, 'release:node-with-oidc-npm', /node-version:\s*'2[4-9]'/.test(source), 'npm >= 11 is required for trusted publishing')
+  }
+
+  const changelogPath = join(root, 'CHANGELOG.md')
+  if (await exists(changelogPath)) {
+    const source = await readFile(changelogPath, 'utf8')
+    check(checks, 'changelog:documents-current-version', source.includes(manifest.version), `no entry for ${manifest.version}`)
+  }
+
+  for (const scriptDir of ['scripts']) {
+    const dir = join(root, scriptDir)
+    if (!(await exists(dir))) continue
+    const scan = (await walk(dir)).filter((entry) => /\.(mjs|js|ps1)$/.test(entry) && basename(entry) !== 'preflight.mjs')
+    for (const file of scan) {
+      const text = await readFile(file, 'utf8')
+      for (const rule of FORBIDDEN_SOURCE_PATTERNS) {
+        check(checks, `source:forbidden:${rule.pattern.source}:${relative(root, file).split(sep).join('/')}`, !rule.pattern.test(text), rule.reason)
+      }
     }
   }
 

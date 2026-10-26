@@ -17,6 +17,10 @@
     "README.md",
     "README.en.md",
     "MARKET.md",
+    "INSTALL.md",
+    "INSTALL.en.md",
+    "DEV.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
@@ -61,7 +65,11 @@
   "scripts": {
     "test": "node --test",
     "preflight": "node scripts/preflight.mjs",
-    "pack": "npm pack"
+    "pack": "npm pack",
+    "deploy": "node scripts/deploy.mjs",
+    "hmr:on": "node scripts/hmr.mjs on",
+    "hmr:off": "node scripts/hmr.mjs off",
+    "hmr:status": "node scripts/hmr.mjs status"
   },
   "devDependencies": {
     "@deepseek-ai/schemastery": "^3.18.5"
