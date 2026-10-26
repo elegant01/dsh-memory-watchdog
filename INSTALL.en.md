@@ -13,7 +13,7 @@ dsh plugin add dsh-memory-watchdog
 A DSH profile pins plugins to an exact version, so a new release is not picked up automatically. To upgrade, name the version explicitly:
 
 ```sh
-dsh plugin add dsh-memory-watchdog@0.2.0
+dsh plugin add dsh-memory-watchdog@0.2.1
 ```
 
 ## From a local checkout (development)

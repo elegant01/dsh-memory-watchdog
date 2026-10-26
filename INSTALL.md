@@ -10,7 +10,7 @@
 dsh plugin add dsh-memory-watchdog
 ```
 
-DSH 的 profile 会把插件钉在当时的精确版本上，发新版不会自动升级；要升级就再执行一次上面那条命令并指定版本，例如 `dsh plugin add dsh-memory-watchdog@0.2.0`。
+DSH 的 profile 会把插件钉在当时的精确版本上，发新版不会自动升级；要升级就再执行一次上面那条命令并指定版本，例如 `dsh plugin add dsh-memory-watchdog@0.2.1`。
 
 ## 从本地源码安装（开发用）
 

@@ -2,6 +2,10 @@
 
 本文件记录 `dsh-memory-watchdog` 的可见变化。版本号跟着 `package.json` 走。
 
+## 0.2.1
+
+- 变更：无功能改动。本版只用来验证 npm Trusted Publisher（GitHub Actions OIDC）的免密发布链路——`release.yml` 直接 `npm publish --provenance`，不再需要 token、也不再需要验证码。
+
 ## 0.2.0
 
 - 新增：提交内存归因（DSH 进程树占比 + 占用最高的进程，带可执行文件路径与进程存活时长），每 30 秒一轮。
