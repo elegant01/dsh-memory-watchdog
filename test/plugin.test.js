@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { apply, Config, inject, name } from '../lib/index.js'
 import { makeTempDir, settle } from './helpers.js'
 
+const IS_WINDOWS = process.platform === 'win32'
+
 function fakeCollector() {
   return {
     started: 0,
@@ -110,9 +112,8 @@ async function startPlugin(overrides = {}) {
     setTimeout: () => ({ unref() {} }),
     clearTimeout: () => {},
   })
+  await runtime.starting
   await settle()
-  await settle()
-  for (let i = 0; i < 100 && runtime.collector === null && !runtime.disposed; i += 1) await settle()
   return { ...io, temp, collector, rawConfig, runtime, resume }
 }
 
@@ -359,7 +360,8 @@ test('dispose unregisters the routes, stops the collector and detaches the liste
   const io = await startPlugin()
   await io.effects[0].disposer()
   assert.equal(io.runtime.disposed, true)
-  assert.equal(io.collector.stopped, 1)
+  assert.equal(io.collector.stopped, IS_WINDOWS ? 1 : 0, 'the sampler is only owned on Windows')
+  assert.equal(io.runtime.collector === null, !IS_WINDOWS)
   assert.deepEqual(io.removed.sort(), [
     '/api/commit-guard.cancel',
     '/api/commit-guard.events',
