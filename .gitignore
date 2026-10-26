@@ -9,5 +9,6 @@ review/recheck/
 # local working notes, not published
 review/
 dsh-commit-guard-requirements*.md
+dsh-memory-watchdog-requirements*.md
 dsh-memory-guard-requirements*.md
 .github-work/
