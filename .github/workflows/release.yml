@@ -1,4 +1,16 @@
-name: Release
+name: Publish Package
+
+# 发布 npm 包（照 dsh-codearts 的形式）：
+#   - npmjs：用 npm Trusted Publisher（OIDC）发布 dsh-memory-watchdog，免 token、免 OTP
+#   - 打 GitHub Release 即触发；也可在 Actions 里手动 workflow_dispatch
+#
+# 前置（一次性，包存在之后才配得了）：
+#   npmjs.com → 包页面 → Settings → Publishing access → Trusted Publisher
+#   → GitHub Actions / Owner: elegant01 / Repository: dsh-memory-watchdog
+#   → Workflow filename: release.yml / Environment: 留空
+#
+# ⚠️ 这里刻意不给 setup-node 设 registry-url：一旦生成带认证行的 .npmrc，
+# npm 会走 token 路径而不是 OIDC 握手，首发就会以 ENEEDAUTH 失败。
 
 on:
   release:
@@ -6,7 +18,7 @@ on:
   workflow_dispatch:
     inputs:
       dryRun:
-        description: Run the gates without publishing
+        description: 只跑门禁，不发布
         type: boolean
         default: false
 
@@ -15,21 +27,34 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
+  verify:
+    name: Test and preflight
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: '24'
       - run: npm ci
       - run: npm test
       - run: npm run preflight
-      - if: ${{ github.event_name == 'workflow_dispatch' && inputs.dryRun }}
-        run: npm pack --dry-run
-      - name: Publish to npm
-        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dryRun) }}
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-npmjs:
+    name: Publish to npmjs (OIDC)
+    needs: verify
+    if: ${{ github.event_name == 'release' || !inputs.dryRun }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 内置 npm >= 11，满足 trusted publishing / provenance 要求
+          node-version: '24'
+      - run: npm ci
+      - run: npm test
+      - run: npm run preflight
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
