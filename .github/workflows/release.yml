@@ -8,7 +8,7 @@ on:
       dryRun:
         description: Run the gates without publishing
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read
@@ -28,7 +28,8 @@ jobs:
       - run: npm run preflight
       - if: ${{ github.event_name == 'workflow_dispatch' && inputs.dryRun }}
         run: npm pack --dry-run
-      - if: ${{ github.event_name == 'release' }}
+      - name: Publish to npm
+        if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && !inputs.dryRun) }}
         run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
