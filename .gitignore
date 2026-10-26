@@ -1,0 +1,13 @@
+node_modules/
+.probe/
+.dsh-src/
+.dsh-shell/
+review/exp/
+review/recheck/
+*.tgz
+*.log
+# local working notes, not published
+review/
+dsh-commit-guard-requirements*.md
+dsh-memory-guard-requirements*.md
+.github-work/

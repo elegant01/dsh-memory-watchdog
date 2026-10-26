@@ -1,0 +1,5 @@
+# Inserts the commit-memory guard into the Desktop profile. Auto restart stays off
+# until the user turns it on in Settings -> Plugins -> DSH Commit Guard.
+- insert:
+    - id: commit-guard
+      name: dsh-commit-guard

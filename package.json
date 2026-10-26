@@ -1,0 +1,69 @@
+{
+  "name": "dsh-commit-guard",
+  "displayName": "DSH Commit Guard",
+  "description": "Windows commit-memory watchdog for DSH Desktop: attribution, configurable thresholds, a restart gate, read-only pagefile advice, a crash timeline and opt-in restart / crash-resume.",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "MARKET.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0-rc.1 <0.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "memory",
+    "commit-charge",
+    "watchdog",
+    "windows"
+  ],
+  "license": "MIT",
+  "author": "dsh-commit-guard contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elegant01/dsh-commit-guard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/elegant01/dsh-commit-guard/issues"
+  },
+  "homepage": "https://github.com/elegant01/dsh-commit-guard#readme",
+  "scripts": {
+    "test": "node --test",
+    "preflight": "node scripts/preflight.mjs",
+    "pack": "npm pack"
+  },
+  "devDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5"
+  }
+}
