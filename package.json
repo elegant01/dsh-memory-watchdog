@@ -1,6 +1,6 @@
 {
-  "name": "dsh-commit-guard",
-  "displayName": "DSH Commit Guard",
+  "name": "dsh-memory-watchdog",
+  "displayName": "DSH Memory Guard",
   "description": "Windows commit-memory watchdog for DSH Desktop: attribution, configurable thresholds, a restart gate, read-only pagefile advice, a crash timeline and opt-in restart / crash-resume.",
   "version": "0.2.0",
   "type": "module",
@@ -49,15 +49,15 @@
     "windows"
   ],
   "license": "MIT",
-  "author": "dsh-commit-guard contributors",
+  "author": "dsh-memory-watchdog contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/elegant01/dsh-commit-guard.git"
+    "url": "git+https://github.com/elegant01/dsh-memory-watchdog.git"
   },
   "bugs": {
-    "url": "https://github.com/elegant01/dsh-commit-guard/issues"
+    "url": "https://github.com/elegant01/dsh-memory-watchdog/issues"
   },
-  "homepage": "https://github.com/elegant01/dsh-commit-guard#readme",
+  "homepage": "https://github.com/elegant01/dsh-memory-watchdog#readme",
   "scripts": {
     "test": "node --test",
     "preflight": "node scripts/preflight.mjs",

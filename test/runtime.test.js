@@ -462,7 +462,7 @@ test('status exposes the documented fields and reports notices and errors', asyn
   const status = h.rt.status()
 
   assert.equal(status.ok, true)
-  assert.equal(status.plugin.name, 'dsh-commit-guard')
+  assert.equal(status.plugin.name, 'dsh-memory-watchdog')
   assert.equal(status.plugin.hostPid, 4242)
   assert.equal(status.plugin.hostRss, 128 * 1024 * 1024)
   assert.equal(status.autoRestart.enabled, true)

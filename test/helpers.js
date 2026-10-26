@@ -45,7 +45,7 @@ export async function driveToCritical(feed) {
   await feed(96)
 }
 
-export async function makeTempDir(prefix = 'dsh-commit-guard-test-') {
+export async function makeTempDir(prefix = 'dsh-memory-watchdog-test-') {
   const dir = await mkdtemp(join(tmpdir(), prefix))
   return {
     dir,

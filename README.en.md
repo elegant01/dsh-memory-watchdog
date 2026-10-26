@@ -1,4 +1,4 @@
-# DSH Commit Guard (dsh-commit-guard)
+# DSH Memory Guard (dsh-memory-watchdog)
 
 A Windows commit-memory watchdog for DSH Desktop. It continuously samples system commit charge, tells you **who is eating commit memory**, gives read-only pagefile advice and a 7-day crash timeline, and warns in the UI when memory enters the warning or critical range. **Automatic restart is off by default**, and **resume-after-crash is off by default**.
 
@@ -12,7 +12,7 @@ A Windows commit-memory watchdog for DSH Desktop. It continuously samples system
 ## Automatic restart is off by default
 
 Monitoring, attribution, the crash timeline and warnings start as soon as the plugin loads, but **nothing is restarted and no message is ever injected** until you enable the switches under
-Settings → Plugins → DSH Commit Guard. The setting page always shows the full cost of enabling them; there is no confirmation dialog to expand or dismiss.
+Settings → Plugins → DSH Memory Guard. The setting page always shows the full cost of enabling them; there is no confirmation dialog to expand or dismiss.
 
 Turning the switch off immediately cancels any pending restart that has not started. Monitoring and warnings continue.
 
@@ -75,9 +75,9 @@ When `resumeAfterCrash` is on, the plugin scans sessions after DSH restarts and 
 - Only sessions with a human prompt in the last 12 hours that are not running and not blank qualify, and the interruption must be at least 20 seconds old so a freshly opened session is not raced.
 - At most two attempts per session per hour; the counter resets once an hour without a new attempt.
 - If a subagent was interrupted, the parent session is woken once even when its own turn already ended `completed`, and that child is then marked handled so a zombie child cannot wake the parent forever.
-- The injected `requestId` is derived as `commit-guard-resume-<sessionId>-<turn>[-child]`, so repeated scans cannot inject twice.
+- The injected `requestId` is derived as `memory-watchdog-resume-<sessionId>-<turn>[-child]`, so repeated scans cannot inject twice.
 - Scans run at 20 s / 60 s / 180 s / 600 s after startup, and deferred sessions are rescheduled at their due time. The card also has a "Scan now" button.
-- The ledger lives in `$DSH_HOME/commit-guard/resume.json`; the card shows the shortened session id, turn, cause and attempt count.
+- The ledger lives in `$DSH_HOME/memory-watchdog/resume.json`; the card shows the shortened session id, turn, cause and attempt count.
 - A resumed turn runs with that session's existing tools and permissions — **the main thing to weigh before turning this on**.
 
 ## How a restart is decided
@@ -120,7 +120,7 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, doe
 - Capability checks and pre-handoff checks read the target executable path, creation time and command line, and verify the Host/Electron parent relationship.
 - During a restart, only the **identity-verified** Electron main process, the Host, and previously recorded descendants with the same executable are touched. The helper may suspend first and terminate only after a timeout. It does **not** use `taskkill /IM ... /T /F` and does not choose victims by memory usage.
 - Resume only calls DSH's `sessionController` `list` / `inspect` / `prompt` (with `mode: 'queue'`). It uses no process-creation API and writes nothing outside the session log.
-- State, events, capability results, the resume ledger and handoff files live under `$DSH_HOME/commit-guard/` (default `~/.dsh/commit-guard/`).
+- State, events, capability results, the resume ledger and handoff files live under `$DSH_HOME/memory-watchdog/` (default `~/.dsh/memory-watchdog/`).
 - Status, events, cancel and resume routes are registered through DSH's authenticated `ctx.connection.fetch`; responses are not cached. The client cannot supply a PID, executable, command line, script path or helper arguments, and cannot change settings.
 - The plugin makes no network requests and uploads no telemetry or diagnostics.
 
@@ -132,7 +132,7 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, doe
 
 ## Notification boundary
 
-DSH does not currently expose a system notification or tray API to plugins. Notifications therefore exist only inside the page (toast plus the always-visible pill); **system-level notifications are not promised**. If the renderer is already dead or no page is open, in-page prompts are unavailable. Events, the crash timeline and the last-restart record under `$DSH_HOME/commit-guard/` are shown the next time the UI loads.
+DSH does not currently expose a system notification or tray API to plugins. Notifications therefore exist only inside the page (toast plus the always-visible pill); **system-level notifications are not promised**. If the renderer is already dead or no page is open, in-page prompts are unavailable. Events, the crash timeline and the last-restart record under `$DSH_HOME/memory-watchdog/` are shown the next time the UI loads.
 
 ## Known limits
 
@@ -148,7 +148,7 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 
 Install from DSH Market, or use DSH's plugin installation capability to install a built npm tarball. No service is required after installation, and no build step runs on the consumer machine.
 
-On uninstall the plugin clears its timers, cancels pending actions and stops the sampling child process. Historical files under `$DSH_HOME/commit-guard/` are not deleted automatically and may be removed manually once no longer needed. **Do not uninstall while a restart handoff is already in progress**: the detached helper may still complete that restart.
+On uninstall the plugin clears its timers, cancels pending actions and stops the sampling child process. Historical files under `$DSH_HOME/memory-watchdog/` are not deleted automatically and may be removed manually once no longer needed. **Do not uninstall while a restart handoff is already in progress**: the detached helper may still complete that restart.
 
 ## Development
 

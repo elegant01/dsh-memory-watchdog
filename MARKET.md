@@ -1,4 +1,4 @@
-# DSH Commit Guard — Market 说明
+# DSH Memory Guard — Market 说明
 
 ## 一句话
 
@@ -8,8 +8,8 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 
 | 项 | 内容 |
 | --- | --- |
-| 插件名 | `dsh-commit-guard` |
-| 显示名 | DSH Commit Guard / DSH 提交内存守护 |
+| 插件名 | `dsh-memory-watchdog` |
+| 显示名 | DSH Memory Guard / DSH 内存守护 |
 | 支持平台 | Windows x64 |
 | DSH 版本 | `>=0.2.0-rc.1 <0.3` |
 | 默认状态 | 监控 / 归因 / 时间线开启；自动重启与崩溃续接**关闭** |
@@ -52,7 +52,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 仅在交接时处理已校验身份的 Electron 主进程、Host 及事先记录的相同 executable 子进程；不使用宽泛 `taskkill /IM`，不按内存占用结束无关软件。
 - 崩溃续接只调用 DSH `sessionController` 的 `list` / `inspect` / `prompt`（`mode: 'queue'`），不使用任何进程创建 API。
 - 通过 DSH 带认证的 `connection.fetch` 暴露状态 / 事件 / 取消 / 立即扫描接口；响应禁止缓存；客户端不能传入 PID、路径、命令行、脚本路径或 helper 参数，也不能改配置。
-- 数据仅写入 `$DSH_HOME/commit-guard/`（默认 `~/.dsh/commit-guard/`），不发起网络请求。
+- 数据仅写入 `$DSH_HOME/memory-watchdog/`（默认 `~/.dsh/memory-watchdog/`），不发起网络请求。
 
 ## 资源开销
 
@@ -71,7 +71,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 
 ## 卸载
 
-卸载会清理定时器、取消待执行动作并停止采集进程；`$DSH_HOME/commit-guard/` 下的历史记录需手动删除。**交接已开始时不要卸载**，detached helper 可能仍会完成本次重启。
+卸载会清理定时器、取消待执行动作并停止采集进程；`$DSH_HOME/memory-watchdog/` 下的历史记录需手动删除。**交接已开始时不要卸载**，detached helper 可能仍会完成本次重启。
 
 ## 许可证
 

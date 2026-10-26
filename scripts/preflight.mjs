@@ -101,7 +101,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     return { ok: false, checks }
   }
 
-  check(checks, 'manifest:name', manifest.name === 'dsh-commit-guard', String(manifest.name))
+  check(checks, 'manifest:name', manifest.name === 'dsh-memory-watchdog', String(manifest.name))
   check(checks, 'manifest:type', manifest.type === 'module', String(manifest.type))
   check(checks, 'manifest:main', manifest.main === 'lib/index.js', String(manifest.main))
   check(checks, 'manifest:exports:dot', manifest.exports?.['.'] === './lib/index.js', JSON.stringify(manifest.exports?.['.'] ?? null))
@@ -122,7 +122,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
   if (await exists(patchPath)) {
     const patch = await readFile(patchPath, 'utf8')
     check(checks, 'patch:insert', /-\s*insert:/.test(patch), patch.trim())
-    check(checks, 'patch:name', /name:\s*dsh-commit-guard/.test(patch), patch.trim())
+    check(checks, 'patch:name', /name:\s*dsh-memory-watchdog/.test(patch), patch.trim())
   }
 
   const indexPath = join(root, 'lib/index.js')
@@ -157,7 +157,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
   if (await exists(resumePath)) {
     const source = await readFile(resumePath, 'utf8')
     check(checks, 'resume:aborted-guard', /resume\.user-canceled/.test(source) && /'aborted'/.test(source))
-    check(checks, 'resume:idempotent-request-id', /commit-guard-resume-\$\{sessionId\}-\$\{turn\}\$\{suffix\}/.test(source))
+    check(checks, 'resume:idempotent-request-id', /memory-watchdog-resume-\$\{sessionId\}-\$\{turn\}\$\{suffix\}/.test(source))
     check(checks, 'resume:ledger-before-prompt', /await this\.writeLedger\(\)[\s\S]{0,400}controller\.prompt/.test(source))
     check(checks, 'resume:child-anti-loop', /childHandled/.test(source))
   }
@@ -181,21 +181,21 @@ export async function runPreflight({ root = defaultRoot } = {}) {
   const routesPath = join(root, 'lib/routes.js')
   if (await exists(routesPath)) {
     const source = await readFile(routesPath, 'utf8')
-    check(checks, 'routes:events', source.includes('/api/commit-guard.events') && /methods:\s*\['GET'\]/.test(source))
-    check(checks, 'routes:resume-post', source.includes('/api/commit-guard.resume') && /resume-disabled/.test(source))
+    check(checks, 'routes:events', source.includes('/api/memory-watchdog.events') && /methods:\s*\['GET'\]/.test(source))
+    check(checks, 'routes:resume-post', source.includes('/api/memory-watchdog.resume') && /resume-disabled/.test(source))
   }
 
   const clientPath = join(root, 'lib/client/index.js')
   if (await exists(clientPath)) {
     const client = await readFile(clientPath, 'utf8')
-    check(checks, 'client:loader-id', /id:\s*"dsh-commit-guard"/.test(client))
-    check(checks, 'client:bundle-config-key', /key:\s*"dsh-commit-guard"/.test(client))
-    check(checks, 'client:status-route', client.includes('/api/commit-guard.status'))
-    check(checks, 'client:cancel-route', client.includes('/api/commit-guard.cancel'))
+    check(checks, 'client:loader-id', /id:\s*"dsh-memory-watchdog"/.test(client))
+    check(checks, 'client:bundle-config-key', /key:\s*"dsh-memory-watchdog"/.test(client))
+    check(checks, 'client:status-route', client.includes('/api/memory-watchdog.status'))
+    check(checks, 'client:cancel-route', client.includes('/api/memory-watchdog.cancel'))
     check(checks, 'client:disclosure', client.includes('disclosure1') && client.includes('disclosure5'))
     check(checks, 'client:disclosure-gate', client.includes('disclosure6') && client.includes('disclosure7'))
-    check(checks, 'client:events-route', client.includes('/api/commit-guard.events'))
-    check(checks, 'client:resume-route', client.includes('/api/commit-guard.resume'))
+    check(checks, 'client:events-route', client.includes('/api/memory-watchdog.events'))
+    check(checks, 'client:resume-route', client.includes('/api/memory-watchdog.resume'))
     for (const section of ['attributionTitle', 'residentGrowLabel', 'systemTitle', 'crashTitle', 'historyTitle', 'resumeTitle', 'copyDiagnostics']) {
       check(checks, `client:section:${section}`, client.includes(section), section)
     }

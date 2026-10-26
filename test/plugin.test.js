@@ -118,7 +118,7 @@ async function startPlugin(overrides = {}) {
 }
 
 test('the plugin exports its name, inject list and a default-off volatile switch', () => {
-  assert.equal(name, 'dsh-commit-guard')
+  assert.equal(name, 'dsh-memory-watchdog')
   assert.deepEqual(inject, ['connection'])
   const autoRestart = Config.dict.autoRestart
   assert.equal(autoRestart.meta.default, false)
@@ -147,7 +147,7 @@ test('the plugin exports its name, inject list and a default-off volatile switch
 
 test('status is served with no-store and a JSON content type', async () => {
   const io = await startPlugin()
-  const route = io.routes.get('/api/commit-guard.status')
+  const route = io.routes.get('/api/memory-watchdog.status')
   assert.ok(route)
   assert.deepEqual(route.methods, ['GET'])
   const response = await route.fetch()
@@ -156,7 +156,7 @@ test('status is served with no-store and a JSON content type', async () => {
   assert.match(response.headers.get('cache-control'), /no-store/)
   const body = await response.json()
   assert.equal(body.ok, true)
-  assert.equal(body.plugin.name, 'dsh-commit-guard')
+  assert.equal(body.plugin.name, 'dsh-memory-watchdog')
   assert.equal(body.autoRestart.enabled, false)
   assert.equal(body.config.resumeAfterCrash, false)
   assert.equal(body.config.thresholds.warningPct, 80)
@@ -176,16 +176,16 @@ test('status is served with no-store and a JSON content type', async () => {
 
 test('the events route returns the rolling history and honours the limit', async () => {
   const io = await startPlugin()
-  const route = io.routes.get('/api/commit-guard.events')
+  const route = io.routes.get('/api/memory-watchdog.events')
   assert.deepEqual(route.methods, ['GET'])
-  const empty = await route.fetch(new Request('http://x/api/commit-guard.events'))
+  const empty = await route.fetch(new Request('http://x/api/memory-watchdog.events'))
   assert.equal(empty.status, 200)
   assert.deepEqual((await empty.json()).items, [])
 
   for (const at of [1, 2, 3]) {
     await io.runtime.store.recordEvent({ version: 1, kind: 'pressure-warning', at })
   }
-  const response = await route.fetch(new Request('http://x/api/commit-guard.events?limit=2'))
+  const response = await route.fetch(new Request('http://x/api/memory-watchdog.events?limit=2'))
   const body = await response.json()
   assert.equal(body.ok, true)
   assert.equal(body.limit, 2)
@@ -196,9 +196,9 @@ test('the events route returns the rolling history and honours the limit', async
 
 test('the resume route refuses to scan while crash resume is off', async () => {
   const io = await startPlugin()
-  const route = io.routes.get('/api/commit-guard.resume')
+  const route = io.routes.get('/api/memory-watchdog.resume')
   assert.deepEqual(route.methods, ['POST'])
-  const request = () => new Request('http://x/api/commit-guard.resume', {
+  const request = () => new Request('http://x/api/memory-watchdog.resume', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{}',
@@ -209,7 +209,7 @@ test('the resume route refuses to scan while crash resume is off', async () => {
   assert.equal((await blocked.json()).code, 'resume-disabled')
   assert.equal(io.resume.scans.length, 0)
 
-  const invalid = await route.fetch(new Request('http://x/api/commit-guard.resume', { method: 'POST', body: '{}' }))
+  const invalid = await route.fetch(new Request('http://x/api/memory-watchdog.resume', { method: 'POST', body: '{}' }))
   assert.equal(invalid.status, 415)
 
   io.rawConfig.resumeAfterCrash = true
@@ -252,8 +252,8 @@ test('a resume scan failure is reported as a service error', async () => {
       }),
     },
   })
-  const route = io.routes.get('/api/commit-guard.resume')
-  const response = await route.fetch(new Request('http://x/api/commit-guard.resume', {
+  const route = io.routes.get('/api/memory-watchdog.resume')
+  const response = await route.fetch(new Request('http://x/api/memory-watchdog.resume', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{}',
@@ -266,14 +266,14 @@ test('a resume scan failure is reported as a service error', async () => {
 
 test('the cancel route rejects bad media types and bodies', async () => {
   const io = await startPlugin()
-  const route = io.routes.get('/api/commit-guard.cancel')
+  const route = io.routes.get('/api/memory-watchdog.cancel')
   assert.deepEqual(route.methods, ['POST'])
 
-  const unsupported = await route.fetch(new Request('http://x/api/commit-guard.cancel', { method: 'POST', body: '{}' }))
+  const unsupported = await route.fetch(new Request('http://x/api/memory-watchdog.cancel', { method: 'POST', body: '{}' }))
   assert.equal(unsupported.status, 415)
   assert.equal((await unsupported.json()).code, 'unsupported-media-type')
 
-  const invalid = await route.fetch(new Request('http://x/api/commit-guard.cancel', {
+  const invalid = await route.fetch(new Request('http://x/api/memory-watchdog.cancel', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{not json',
@@ -281,7 +281,7 @@ test('the cancel route rejects bad media types and bodies', async () => {
   assert.equal(invalid.status, 400)
   assert.equal((await invalid.json()).code, 'invalid-json')
 
-  const array = await route.fetch(new Request('http://x/api/commit-guard.cancel', {
+  const array = await route.fetch(new Request('http://x/api/memory-watchdog.cancel', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '[]',
@@ -289,7 +289,7 @@ test('the cancel route rejects bad media types and bodies', async () => {
   assert.equal(array.status, 400)
   assert.equal((await array.json()).code, 'invalid-body')
 
-  const empty = await route.fetch(new Request('http://x/api/commit-guard.cancel', {
+  const empty = await route.fetch(new Request('http://x/api/memory-watchdog.cancel', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '',
@@ -303,8 +303,8 @@ test('the cancel route rejects bad media types and bodies', async () => {
 
 test('the cancel route reports idempotent success and a 409 during handoff', async () => {
   const io = await startPlugin()
-  const route = io.routes.get('/api/commit-guard.cancel')
-  const request = () => new Request('http://x/api/commit-guard.cancel', {
+  const route = io.routes.get('/api/memory-watchdog.cancel')
+  const request = () => new Request('http://x/api/memory-watchdog.cancel', {
     method: 'POST',
     headers: { 'content-type': 'application/json; charset=utf-8' },
     body: '{}',
@@ -363,10 +363,10 @@ test('dispose unregisters the routes, stops the collector and detaches the liste
   assert.equal(io.collector.stopped, IS_WINDOWS ? 1 : 0, 'the sampler is only owned on Windows')
   assert.equal(io.runtime.collector === null, !IS_WINDOWS)
   assert.deepEqual(io.removed.sort(), [
-    '/api/commit-guard.cancel',
-    '/api/commit-guard.events',
-    '/api/commit-guard.resume',
-    '/api/commit-guard.status',
+    '/api/memory-watchdog.cancel',
+    '/api/memory-watchdog.events',
+    '/api/memory-watchdog.resume',
+    '/api/memory-watchdog.status',
   ])
   assert.equal(io.routes.size, 0)
   assert.equal(io.handlers.has('loader/volatile-update'), false)

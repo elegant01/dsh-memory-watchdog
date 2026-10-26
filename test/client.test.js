@@ -120,8 +120,8 @@ function fakeContext() {
 
 test('the client bundle loads without touching the network', () => {
   const { definition, exports, fetchCalls } = loadClient()
-  assert.equal(definition.id, 'dsh-commit-guard')
-  assert.equal(exports.name, 'dsh-commit-guard-client')
+  assert.equal(definition.id, 'dsh-memory-watchdog')
+  assert.equal(exports.name, 'dsh-memory-watchdog-client')
   assert.deepEqual(Array.from(exports.inject), ['slots', 'locale'])
   assert.equal(typeof exports.apply, 'function')
   assert.equal(fetchCalls.length, 0)
@@ -132,7 +132,7 @@ test('apply registers locale copy and both UI slots', () => {
   const io = fakeContext()
   exports.apply(io.ctx)
 
-  assert.deepEqual(io.locales.map((entry) => entry.namespace), ['settings.commit-guard'])
+  assert.deepEqual(io.locales.map((entry) => entry.namespace), ['settings.memory-watchdog'])
   const { zh, en } = io.locales[0].dictionaries
   for (const dictionary of [zh, en]) {
     assert.equal(typeof dictionary.title, 'string')
@@ -157,22 +157,22 @@ test('apply registers locale copy and both UI slots', () => {
 
   const [card, overlay] = io.registrations
   assert.equal(card.definition.name, 'plugins.bundle.config')
-  assert.equal(card.definition.key, 'dsh-commit-guard')
-  assert.equal(card.definition.locale, 'settings.commit-guard')
+  assert.equal(card.definition.key, 'dsh-memory-watchdog')
+  assert.equal(card.definition.locale, 'settings.memory-watchdog')
   assert.equal(typeof card.definition.inject, 'function')
   const injected = card.definition.inject()
   assert.equal(typeof injected.t, 'function')
 
   assert.equal(overlay.definition.name, 'shell.overlay')
-  assert.equal(overlay.definition.id, 'dsh-commit-guard.overlay')
-  assert.equal(overlay.definition.locale, 'settings.commit-guard')
+  assert.equal(overlay.definition.id, 'dsh-memory-watchdog.overlay')
+  assert.equal(overlay.definition.locale, 'settings.memory-watchdog')
 })
 
 test('dotted locale keys resolve through the flat host dictionary', () => {
   const { exports } = loadClient()
   const io = fakeContext()
   exports.apply(io.ctx)
-  const t = io.ctx.locale.bind('settings.commit-guard')
+  const t = io.ctx.locale.bind('settings.memory-watchdog')
 
   assert.equal(t('state.normal'), '正常')
   assert.equal(t('action.waiting'), '等待空闲')
@@ -195,7 +195,7 @@ test('the config slot hides the summary and renders the guard card on the page',
   const tree = page.type(page.props)
   assert.equal(tree.type, 'div')
   const text = JSON.stringify(tree, (key, value) => (typeof value === 'function' ? String(value.name) : value))
-  assert.match(text, /DSH 提交内存守护/)
+  assert.match(text, /DSH 内存守护/)
   assert.match(text, /正在读取状态/)
 
   const disclosureElement = tree.props.children.find(
@@ -231,7 +231,7 @@ test('the overlay slot renders the passive overlay element', () => {
 function fullStatus() {
   return {
     ok: true,
-    plugin: { name: 'dsh-commit-guard', version: '0.2.0', startedAt: 1, hostPid: 4242, hostRss: 128 * 1024 * 1024 },
+    plugin: { name: 'dsh-memory-watchdog', version: '0.2.0', startedAt: 1, hostPid: 4242, hostRss: 128 * 1024 * 1024 },
     platform: { supported: true, platform: 'win32', arch: 'x64', reason: null },
     autoRestart: { enabled: false, capability: { state: 'unavailable', ok: false, reason: 'helper job missing', checkedAt: 1, hint: 'capability.hint.job' } },
     config: {
@@ -374,7 +374,7 @@ test('the guard card renders the attribution, pagefile, crash, history and resum
   const { renderer } = io.registrations[0]
 
   const element = renderer({ view: 'page' })
-  const props = { t: io.ctx.locale.bind('settings.commit-guard') }
+  const props = { t: io.ctx.locale.bind('settings.memory-watchdog') }
   element.type(props)
   await flush()
   const tree = element.type(props)
@@ -412,16 +412,16 @@ test('the card stays read-only: no button posts a restart or a config change', a
   const io = fakeContext()
   exports.apply(io.ctx)
   const element = io.registrations[0].renderer({ view: 'page' })
-  element.type({ t: io.ctx.locale.bind('settings.commit-guard') })
+  element.type({ t: io.ctx.locale.bind('settings.memory-watchdog') })
   await flush()
   const paths = fetchCalls.map((call) => call.url)
-  assert.deepEqual(paths, ['/api/commit-guard.status'])
+  assert.deepEqual(paths, ['/api/memory-watchdog.status'])
 })
 
 test('diagnostics summarize the status without crash bodies or long session ids', () => {
   const { exports } = loadClient()
   const text = exports.buildDiagnostics(fullStatus())
-  assert.match(text, /dsh-commit-guard 0\.2\.0/)
+  assert.match(text, /dsh-memory-watchdog 0\.2\.0/)
   assert.match(text, /pressure: warning 82\.4%/)
   assert.match(text, /thresholds: warning 80% critical 90%/)
   assert.match(text, /gate\.passed share=41\.2%/)
@@ -434,5 +434,5 @@ test('diagnostics summarize the status without crash bodies or long session ids'
   assert.match(text, /lastError: handoff: helper job missing/)
   assert.doesNotMatch(text, /Users\/someone/)
   assert.doesNotMatch(text, /abcdef123456/)
-  assert.equal(exports.buildDiagnostics(null), 'dsh-commit-guard: no status')
+  assert.equal(exports.buildDiagnostics(null), 'dsh-memory-watchdog: no status')
 })
