@@ -2,7 +2,7 @@
 
 本文件记录 `dsh-memory-watchdog` 的可见变化。版本号跟着 `package.json` 走。
 
-## Unreleased
+## 0.3.1
 
 - 修复：开机时提交内存已经在预警/危险区间，胶囊会永远停在「未知」——旧规则只允许 `unknown` 在「连续 3 个样本 `<75%`」时离开，热区间既进不了 warning 也进不了 critical，于是既不告警、又因为「unknown 永不自动重启」在最需要的时候失效。现在 `unknown` 按区间离开：连续 3 个样本 `<75%` 回 normal，`>=80%`/余量不足进 warning，`>=90%` 且余量不足或 `>=95%` 进 critical；「单个有效样本不清空 unknown」这条原意保留不变。
 
