@@ -2,7 +2,7 @@
 
 本文件记录 `dsh-memory-watchdog` 的可见变化。版本号跟着 `package.json` 走。
 
-## Unreleased
+## 0.3.0
 
 - 变更：样本过期判定 `STALE_AFTER_MS` 从 15 秒放宽到 30 秒（采样间隔 5 秒，即连着 6 个样本没送到才算过期）。之前 Host 忙 15～45 秒就会 unknown↔normal 来回翻，右下角成对弹「内存采样不可用」+「已恢复正常」。
 - 新增：因样本延迟（`stale-sample`）进入 unknown 时，toast 延迟 2 分钟（`STALE_NOTICE_DELAY_MS`）才弹；期间恢复则两条提示都不弹，只在事件流留记录并累加 `collector.staleBlips` 计数，摘要浮层与诊断文本显示「采样延迟 N 次（最大滞后 X）」（`collector.maxDeliveryLagMs` 记录观测到的最大送达滞后，用来区分采集器停了还是 Host 没读）。非延迟原因（采集器报错、样本非法、真死）仍立即提示。
