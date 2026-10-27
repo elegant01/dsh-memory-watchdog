@@ -178,12 +178,21 @@ test('episodes get a new id on every critical entry and clear on normal', () => 
   assert.match(machine.episodeId, /^\d+-2$/)
 })
 
-test('unknown stays unknown under critical pressure until a calm window is confirmed', () => {
+test('unknown leaves on a confirmed hot streak, but never on a single sample', () => {
   const clock = makeClock()
   const machine = new PressureMachine({ now: () => clock.now })
-  feedMany(machine, [96, 96, 96, 96, 96], clock)
-  assert.equal(machine.state, 'unknown')
-  assert.equal(machine.episodeId, null)
+  assert.equal(feedMany(machine, [96], clock).length, 0)
+  assert.equal(machine.state, 'unknown', 'one critical sample must not clear unknown')
+
+  const transitions = feedMany(machine, [96, 96], clock)
+  assert.equal(machine.state, 'critical', 'booting under critical pressure must not stay blind')
+  assert.equal(transitions.filter((item) => item.to === 'critical').length, 1)
+  assert.match(machine.episodeId, /^\d+-1$/)
+
+  const warm = new PressureMachine({ now: () => clock.now })
+  feedMany(warm, [82, 82, 82], clock)
+  assert.equal(warm.state, 'warning')
+  assert.equal(warm.episodeId, null)
 })
 
 test('confirm sample count is the documented three', () => {
