@@ -252,7 +252,7 @@ test('the pill is clickable and opens the summary popover', async () => {
   element.type(props)
   await flush()
 
-  react.setHooks([0, false])
+  react.setHooks([0, false, false])
   const closed = element.type(props)
   const pill = closed.props.children.find((child) => child && child.props && child.props.role === 'button')
   assert.ok(pill, 'the pill must be a button when status is available')
@@ -262,7 +262,7 @@ test('the pill is clickable and opens the summary popover', async () => {
   assert.equal(typeof pill.props.onClick, 'function')
   assert.equal(closed.props.children.find((child) => child && child.type && child.type.name === 'SummaryPopover'), undefined)
 
-  react.setHooks([0, true])
+  react.setHooks([0, true, true])
   const open = element.type(props)
   const popover = open.props.children.find((child) => child && typeof child.type === 'function' && child.type.name === 'SummaryPopover')
   assert.ok(popover, 'clicking the pill opens the summary popover')
@@ -278,6 +278,66 @@ test('the pill is clickable and opens the summary popover', async () => {
   assert.match(text, /DeepSeek Harness\.exe/)
   assert.match(text, /采样延迟 2 次/)
   assert.match(text, /收起/)
+  assert.match(String(tree.props.style.transition), /opacity 140ms/)
+  assert.equal(tree.props.style.opacity, 0, 'the popover starts hidden and fades in')
+  assert.equal(tree.props.style.transform, 'translateY(8px)')
+})
+
+test('the popover shows a loading state while a refresh is in flight', async () => {
+  const { exports, react } = loadClient({ status: fullStatus() })
+  const io = fakeContext()
+  exports.apply(io.ctx)
+  const { renderer } = io.registrations[1]
+  const element = renderer({ view: 'page' })
+  const props = { ...element.props, t: io.ctx.locale.bind('settings.memory-watchdog') }
+  element.type(props)
+  await flush()
+
+  react.setHooks([0, true, true])
+  const open = element.type(props)
+  const popover = open.props.children.find((child) => child && typeof child.type === 'function' && child.type.name === 'SummaryPopover')
+  assert.ok(popover)
+
+  react.setHooks([true, true])
+  const loading = popover.type(popover.props)
+  assert.equal(loading.props['aria-busy'], true)
+  assert.equal(loading.props.style.opacity, 0.6)
+  assert.equal(loading.props.style.transform, 'translateY(0)')
+  const footer = loading.props.children.find(
+    (child) => child && Array.isArray(child.props?.children) && child.props.children.some((row) => row && row.props && row.props.type === 'button')
+  )
+  const refreshButton = footer.props.children.find((row) => row && row.props && row.props.type === 'button')
+  assert.equal(refreshButton.props.disabled, true)
+  assert.deepEqual(refreshButton.props.children, ['刷新中…'])
+})
+
+test('the popover stays mounted through the exit transition', async () => {
+  const { exports, react } = loadClient({ status: fullStatus() })
+  const io = fakeContext()
+  exports.apply(io.ctx)
+  const { renderer } = io.registrations[1]
+  const element = renderer({ view: 'page' })
+  const props = { ...element.props, t: io.ctx.locale.bind('settings.memory-watchdog') }
+  element.type(props)
+  await flush()
+
+  react.setHooks([0, false, true])
+  const closing = element.type(props)
+  const popover = closing.props.children.find((child) => child && typeof child.type === 'function' && child.type.name === 'SummaryPopover')
+  assert.ok(popover, 'the popover must still be mounted while it fades out')
+  assert.equal(popover.props.open, false)
+  react.setHooks([false, false])
+  const tree = popover.type(popover.props)
+  assert.equal(tree.props.style.opacity, 0, 'the closing frame is transparent')
+  assert.match(String(tree.props.style.transition), /opacity 140ms/)
+
+  react.setHooks([0, false, false])
+  const gone = element.type(props)
+  assert.equal(
+    gone.props.children.find((child) => child && typeof child.type === 'function' && child.type.name === 'SummaryPopover'),
+    undefined,
+    'once the exit delay passes the popover unmounts'
+  )
 })
 
 function fullStatus() {
