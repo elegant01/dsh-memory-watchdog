@@ -25,6 +25,8 @@ const REQUIRED_FILES = [
   'lib/client/index.js',
   'lib/resources/collector.ps1',
   'lib/resources/jobcheck.ps1',
+  'lib/resources/escape.ps1',
+  'lib/resources/relaunch.ps1',
   'lib/resources/inspect.ps1',
   'lib/resources/freeze.ps1',
   'lib/resources/terminate.ps1',
@@ -47,6 +49,8 @@ const REQUIRED_FILES = [
 const REQUIRED_PS1 = [
   'lib/resources/collector.ps1',
   'lib/resources/jobcheck.ps1',
+  'lib/resources/escape.ps1',
+  'lib/resources/relaunch.ps1',
   'lib/resources/inspect.ps1',
   'lib/resources/freeze.ps1',
   'lib/resources/terminate.ps1',

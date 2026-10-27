@@ -250,9 +250,15 @@ test('checkCapability reads the helper marker and maps failures', async () => {
   })
 
   const ok = await manager.checkCapability({ timeoutMs: 1000 })
-  assert.deepEqual(ok, { ok: true, reason: null, checkedAt: 123, helperPid: 777, mainPid: 200, inJob: false })
+  assert.deepEqual(ok, { ok: true, reason: null, checkedAt: 123, helperPid: 777, mainPid: 200, inJob: false, escape: 'none' })
   assert.deepEqual(calls[0].args.slice(1), ['--capability', join(temp.dir, 'capability.json')])
   assert.equal(calls[0].options.env.ELECTRON_RUN_AS_NODE, '1')
+
+  payload = { ok: true, checkedAt: 123, pid: 777, mainPid: 200, inJob: true, escape: 'breakaway' }
+  const escaped = await manager.checkCapability({ timeoutMs: 1000 })
+  assert.equal(escaped.ok, true)
+  assert.equal(escaped.inJob, true)
+  assert.equal(escaped.escape, 'breakaway')
 
   payload = { ok: false, checkedAt: 456, reason: 'helper is inside a job', inJob: true }
   const failed = await manager.checkCapability({ timeoutMs: 1000 })

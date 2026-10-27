@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { GuardRuntime } from '../lib/runtime.js'
-import { COOLDOWN_MS, RESUME_SCAN_DELAYS_MS, STALE_AFTER_MS } from '../lib/constants.js'
-import { driveToCritical, driveToWarning, makeClock, makeTempDir, sample, settle, GIB } from './helpers.js'
+import { COOLDOWN_MS, RESUME_SCAN_DELAYS_MS, STALE_AFTER_MS, STALE_NOTICE_DELAY_MS } from '../lib/constants.js'
+import { driveToCritical, driveToWarning, makeClock, makeTempDir, primeNormal, sample, settle, GIB } from './helpers.js'
 
 function fakeCollector() {
   return {
@@ -401,8 +401,31 @@ test('a stale sample drops to unknown, cancels pending work and never restarts',
 
   assert.equal(h.rt.machine.state, 'unknown')
   assert.equal(h.rt.pending, null)
+  assert.equal(h.rt.notices.some((notice) => notice.code === 'pressure.unknown'), false, 'the stale notice is deferred, not immediate')
+  const blip = h.timeoutRecords.find((record) => record.ms === STALE_NOTICE_DELAY_MS)
+  assert.ok(blip, 'a deferred stale notice must be armed')
+  blip.fn()
   assert.ok(h.rt.notices.some((notice) => notice.code === 'pressure.unknown'))
   assert.equal(h.handoff.calls.length, 0)
+  await h.cleanup()
+})
+
+test('a short sample delay that recovers in time is counted but never toasted', async () => {
+  const h = await harness()
+  await primeNormal(h.feed)
+  const noticesBefore = h.rt.notices.length
+
+  h.clock.advance(STALE_AFTER_MS + 1000)
+  await h.rt.tick()
+  await settle()
+  assert.equal(h.rt.machine.state, 'unknown')
+
+  for (let index = 0; index < 3; index += 1) await h.feed(70)
+  assert.equal(h.rt.machine.state, 'normal')
+  assert.equal(h.rt.notices.length, noticesBefore, 'neither the blip nor its recovery may toast')
+  assert.equal(h.rt.staleBlips, 1)
+  const blip = h.timeoutRecords.find((record) => record.ms === STALE_NOTICE_DELAY_MS)
+  assert.equal(blip.cleared, true)
   await h.cleanup()
 })
 

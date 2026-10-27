@@ -10,10 +10,16 @@ const clientSource = readFileSync(clientPath, 'utf8')
 function loadClient(options = {}) {
   let definition = null
   const status = options.status ?? { ok: true }
+  let hookStates = null
+  let hookIndex = 0
   const react = {
     Fragment: Symbol('Fragment'),
     createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }),
-    useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+    useState: (initial) => {
+      const picked = Array.isArray(hookStates) && hookIndex < hookStates.length ? hookStates[hookIndex] : initial
+      hookIndex += 1
+      return [typeof picked === 'function' ? picked() : picked, () => {}]
+    },
     useEffect: (fn) => {
       try {
         const cleanup = fn();
@@ -22,8 +28,16 @@ function loadClient(options = {}) {
     },
     useRef: (initial) => ({ current: initial }),
   }
+  react.setHooks = (states) => {
+    hookStates = states
+    hookIndex = 0
+  }
   const fetchCalls = []
   const sandbox = {
+    document: {
+      addEventListener() {},
+      removeEventListener() {},
+    },
     window: {
       __ModuleLoader__: {
         load(value) {
@@ -213,7 +227,7 @@ test('the config slot hides the summary and renders the guard card on the page',
   assert.match(disclosureText, /崩溃续接默认关闭/)
 })
 
-test('the overlay slot renders the passive overlay element', () => {
+test('the overlay slot renders the guard pill overlay', () => {
   const { exports } = loadClient()
   const io = fakeContext()
   exports.apply(io.ctx)
@@ -226,6 +240,44 @@ test('the overlay slot renders the passive overlay element', () => {
   const tree = element.type(element.props)
   assert.equal(typeof tree.type, 'function')
   assert.equal(tree.type.name, 'ToastStack')
+})
+
+test('the pill is clickable and opens the summary popover', async () => {
+  const { exports, react } = loadClient({ status: fullStatus() })
+  const io = fakeContext()
+  exports.apply(io.ctx)
+  const { renderer } = io.registrations[1]
+  const element = renderer({ view: 'page' })
+  const props = { ...element.props, t: io.ctx.locale.bind('settings.memory-watchdog') }
+  element.type(props)
+  await flush()
+
+  react.setHooks([0, false])
+  const closed = element.type(props)
+  const pill = closed.props.children.find((child) => child && child.props && child.props.role === 'button')
+  assert.ok(pill, 'the pill must be a button when status is available')
+  assert.equal(pill.props['aria-expanded'], false)
+  assert.equal(pill.props.style.pointerEvents, 'auto')
+  assert.equal(pill.props.style.cursor, 'pointer')
+  assert.equal(typeof pill.props.onClick, 'function')
+  assert.equal(closed.props.children.find((child) => child && child.type && child.type.name === 'SummaryPopover'), undefined)
+
+  react.setHooks([0, true])
+  const open = element.type(props)
+  const popover = open.props.children.find((child) => child && typeof child.type === 'function' && child.type.name === 'SummaryPopover')
+  assert.ok(popover, 'clicking the pill opens the summary popover')
+  const tree = popover.type(popover.props)
+  const text = JSON.stringify(tree, (key, value) => (typeof value === 'function' ? String(value.name) : value))
+  assert.match(text, /自动重启能力/)
+  assert.match(text, /作业对象/)
+  assert.match(text, /活动检测/)
+  assert.match(text, /空闲/)
+  assert.match(text, /自动重启：已关闭（默认）/)
+  assert.match(text, /DSH 进程树 6 个进程/)
+  assert.match(text, /已通过：DSH 是当前主要占用者/)
+  assert.match(text, /DeepSeek Harness\.exe/)
+  assert.match(text, /采样延迟 2 次/)
+  assert.match(text, /收起/)
 })
 
 function fullStatus() {
@@ -261,7 +313,7 @@ function fullStatus() {
     cooldown: { active: false, remainingMs: 0 },
     episode: { id: null, attempted: false, canceled: false },
     activity: { idle: true, reason: null },
-    collector: { running: true, pid: 777, sampleAgeMs: 1200 },
+    collector: { running: true, pid: 777, sampleAgeMs: 1200, staleBlips: 2, maxDeliveryLagMs: 42727 },
     gate: { allowed: true, code: 'gate.passed', gatePct: 20, sharePct: 41.2 },
     residents: {
       tracked: 2,
@@ -423,6 +475,7 @@ test('diagnostics summarize the status without crash bodies or long session ids'
   const text = exports.buildDiagnostics(fullStatus())
   assert.match(text, /dsh-memory-watchdog 0\.2\.0/)
   assert.match(text, /pressure: warning 82\.4%/)
+  assert.match(text, /collectorLag: max=.*recoveredBlips=2/)
   assert.match(text, /thresholds: warning 80% critical 90%/)
   assert.match(text, /gate\.passed share=41\.2%/)
   assert.match(text, /DeepSeek Harness\.exe 12\.0 GiB/)

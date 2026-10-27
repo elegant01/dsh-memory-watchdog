@@ -58,4 +58,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File lib/resources/system-info.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File lib/resources/crash-history.ps1 -Days 7 -Limit 20
 ```
 
-- helper 若报 `helper is inside a job`：说明 DSH 是从带 Windows 作业对象的父进程（终端、agent）里启动的，自动重启会一直 fail closed；从任务栏/资源管理器启动 DSH 就恢复正常。
+- helper 若报 `helper is inside a job that keeps its child processes`：DSH 是从带 Windows 作业对象的父进程（终端、agent）里启动的，而且 `escape.ps1` 实测新建进程仍留在作业对象内，自动重启会一直 fail closed。只有当这个作业是启动器带进来的（从终端 / agent 拉起 DSH）时，改从任务栏/资源管理器启动才能恢复；DSH 自己给进程树建作业时就换启动方式无效（本机 0.2.1 实测：从一个 `inJob=False` 的 shell 里拉起 DSH，主进程仍然 `inJob=True`、`escape=silent-breakaway`）。能力自检通过但 `capability.json` 里 `escape` 为 `silent-breakaway` / `breakaway` 时，说明是靠脱离作业对象才可用，重启会走 `relaunch.ps1`（带 `CREATE_BREAKAWAY_FROM_JOB`）。
+- 判定「作业允许不允许脱离」只能看子进程落点，不能看错误码：本机（Win10 19045）实测作业没开 `JOB_OBJECT_LIMIT_BREAKAWAY_OK` 时，带 `CREATE_BREAKAWAY_FROM_JOB` 的 CreateProcess **不会**报 `ERROR_ACCESS_DENIED`，而是照旧成功、孩子仍留在作业里。另外 `CreateProcessW` 的 `lpCurrentDirectory` 传 NULL 在本机会直接 `ERROR_INVALID_NAME(123)`，两个探针脚本都必须显式给工作目录。自测办法：`CreateJobObjectW` + `SetInformationJobObject`（LimitFlags 依次给 `0x2000` / `0x2800` / `0x3000`）+ `CREATE_SUSPENDED` + `AssignProcessToJobObject`，再把 helper 以 `--capability` 跑进这个作业，能一次复现「失败关闭 / breakaway / silent-breakaway」三种结论。

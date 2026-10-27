@@ -2,6 +2,17 @@
 
 本文件记录 `dsh-memory-watchdog` 的可见变化。版本号跟着 `package.json` 走。
 
+## Unreleased
+
+- 变更：样本过期判定 `STALE_AFTER_MS` 从 15 秒放宽到 30 秒（采样间隔 5 秒，即连着 6 个样本没送到才算过期）。之前 Host 忙 15～45 秒就会 unknown↔normal 来回翻，右下角成对弹「内存采样不可用」+「已恢复正常」。
+- 新增：因样本延迟（`stale-sample`）进入 unknown 时，toast 延迟 2 分钟（`STALE_NOTICE_DELAY_MS`）才弹；期间恢复则两条提示都不弹，只在事件流留记录并累加 `collector.staleBlips` 计数，摘要浮层与诊断文本显示「采样延迟 N 次（最大滞后 X）」（`collector.maxDeliveryLagMs` 记录观测到的最大送达滞后，用来区分采集器停了还是 Host 没读）。非延迟原因（采集器报错、样本非法、真死）仍立即提示。
+- 变更：重启门限对样本新鲜度的要求随 `STALE_AFTER_MS` 一起变成 30 秒——判定用的样本最多可以比原来旧 15 秒。
+- 新增：右下角状态胶囊可点击，就地展开摘要浮层——压力百分比与已提交/上限、当前状态与下一步动作、自动重启能力（含脱离方式与作业对象提示）、活动检测、自动重启开关、最近事件与错误、DSH 进程树占比、重启门限结论、占用最高的三个进程，底部带「刷新」与「收起」。再点胶囊、Esc 或点浮层外部都收起；浮层与设置页卡片读同一份轮询状态，不额外起采集。
+- 变更：胶囊不再是点击穿透层（原来 `pointerEvents: none`），它现在能接收点击与键盘（Enter / 空格展开，`aria-expanded` 标注）；DSH 取不到状态时胶囊退回只读、不可点击。
+- 新增：能力自检不再因为「helper 位于 Windows 作业对象（Job Object）内」就一律关闭自动重启。helper 改用 `escape.ps1` 实测「新建进程能否脱离作业对象」：先不带标记、再带 `CREATE_BREAKAWAY_FROM_JOB` 各启动一个立刻自行退出的空转子进程，用 `IsProcessInJob` 看它落在哪个作业里——Windows 10 上作业不允许脱离时 CreateProcess 并不报错（不会给 `ERROR_ACCESS_DENIED`），子进程只是仍留在作业内，所以判定只看落点、不看错误码。子进程天然脱离判为 `silent-breakaway`，带标记才脱离判为 `breakaway`，两种情况自动重启照常可用并在面板标注脱离方式；仍留在作业内才失败关闭，`capability.json` 附 `jobProbe` 记下两次探测的落点与错误码。探测只新建空转子进程，不结束任何进程。
+- 新增：脱离方式为 `breakaway` 时，重启改由 `relaunch.ps1` 以 `CREATE_BREAKAWAY_FROM_JOB` 启动 DSH Desktop，命令行按原 argv 逐参数转义，环境变量块沿用当前环境并剔除 `ELECTRON_RUN_AS_NODE`，工作目录取原进程的工作目录；`silent-breakaway` 继续走原来的 spawn 路径。
+- 变更：`capability.json` 与面板的能力状态多带一个 `escape` 字段（`none` / `silent-breakaway` / `breakaway`），作业对象相关的提示文案改为说明真实阻塞点。
+
 ## 0.2.1
 
 - 变更：无功能改动。本版只用来验证 npm Trusted Publisher（GitHub Actions OIDC）的免密发布链路——`release.yml` 直接 `npm publish --provenance`，不再需要 token、也不再需要验证码。

@@ -39,14 +39,15 @@ Every field is volatile, so a change applies immediately without restarting DSH.
   | normal | from unknown: valid samples `<75%` | — |
   | warning | `>=80%` **or** available commit `<=6 GiB` | `<75%` back to normal |
   | critical | `>=90%` and available `<=2 GiB`, **or** `>=95%` | `<85%` back to warning |
-  | unknown | missing, invalid or stale (>15 s) samples | three valid samples `<75%` back to normal |
+  | unknown | missing, invalid or stale (>30 s) samples | three valid samples `<75%` back to normal |
 
 - Samples **commit attribution** every 30 seconds: how much of the commit charge the DSH process tree holds, plus the largest consumers.
 - Reads the **pagefile and commit-limit configuration** every 5 minutes and gives read-only advice.
 - Builds a **7-day crash and memory-event timeline** every 10 minutes from DSH crash logs and the Windows System event log.
 - Keeps the last 50 events, viewable in the card and exportable as JSON, plus a "Copy diagnostics" button.
 - Shows pressure state, action state, commit numbers, available commit, physical memory, Host RSS, cooldown, last error and the last restart record.
-- Emits an in-page toast for warning / critical / recovery / collector errors / restart outcomes / setting changes, plus a small always-visible status pill in the bottom-right corner.
+- Emits an in-page toast for warning / critical / recovery / collector errors / restart outcomes / setting changes, plus a small always-visible status pill in the bottom-right corner. **Clicking the pill opens a summary popover in place** (pressure percentage with used/limit, the current state and next action, the automatic-restart capability, activity detection, the latest event and error, the DSH share, the restart-gate verdict and the three largest consumers). Click the pill again, press Escape or click outside to collapse it; the popover reads the same status as the settings card, and its Refresh button re-fetches immediately.
+- Sampler hiccups stay quiet: when a state enters unknown because samples went stale, the toast is **delayed by 2 minutes**; if samples come back within that window the transitions stay in the event log plus a "sample delays" counter (visible in the summary popover and the diagnostics text, with the worst lag) and no toast appears. A genuinely dead sampler still warns immediately.
 - Cooldown survives a plugin reload; records are stored locally.
 
 ## Commit attribution and the restart gate
@@ -141,7 +142,7 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 - Attribution can only open processes the current user may query (about 197 of ~320 processes on the test machine), and the share is measured against total commit, so the DSH share is a lower bound.
 - Resume cannot know how much of the interrupted turn already happened, which is why the injected message demands a state check first. That reduces the risk; it does not remove it.
 - Activity checks reduce the chance of a bad restart but do not eliminate every concurrency race.
-- Different Windows / DSH launch paths may change the job flags. On startup the helper calls `IsProcessInJob` and fails closed without touching any process if it finds itself inside a job.
+- Different Windows / DSH launch paths may change the job flags. When the helper self-check finds it runs inside a job, it measures whether a new process can escape that job by starting two no-op children that exit immediately: if the escape works, automatic restart stays available (the card shows which escape was used); if it does not, the check fails closed. No process is ever terminated by this probe. Switching to a taskbar / Explorer launch only helps when that job came from the terminal or agent that started DSH - on the reference machine DSH creates a job for its own process tree, so the launch path changes nothing.
 - Real-world restarts, different launch paths and long-term stability still need to be verified against the release checklist.
 
 ## Install and uninstall
