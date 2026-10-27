@@ -39,7 +39,7 @@ Every field is volatile, so a change applies immediately without restarting DSH.
   | normal | from unknown: three consecutive valid samples `<75%` | — |
   | warning | `>=80%` **or** available commit `<=6 GiB` | `<75%` back to normal |
   | critical | `>=90%` and available `<=2 GiB`, **or** `>=95%` | `<85%` back to warning |
-  | unknown | missing, invalid or stale (>30 s) samples | three consecutive valid samples leave it by band: `<75%` to normal, a hot band to warning / critical |
+  | unknown | missing, invalid or stale (>60 s) samples | three consecutive valid samples leave it by band: `<75%` to normal, a hot band to warning / critical |
 
 - Samples **commit attribution** every 30 seconds: how much of the commit charge the DSH process tree holds, plus the largest consumers.
 - Reads the **pagefile and commit-limit configuration** every 5 minutes and gives read-only advice.
