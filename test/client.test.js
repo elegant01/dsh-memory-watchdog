@@ -37,6 +37,9 @@ function loadClient(options = {}) {
     document: {
       addEventListener() {},
       removeEventListener() {},
+      getElementById: () => null,
+      createElement: () => ({ id: "", textContent: "" }),
+      head: { appendChild() {} },
     },
     window: {
       __ModuleLoader__: {
@@ -301,7 +304,11 @@ test('the popover shows a loading state while a refresh is in flight', async () 
   react.setHooks([true, true])
   const loading = popover.type(popover.props)
   assert.equal(loading.props['aria-busy'], true)
-  assert.equal(loading.props.style.opacity, 0.6)
+  assert.equal(loading.props.style.opacity, 1, 'the text must stay readable while refreshing')
+  const bar = loading.props.children[0]
+  assert.ok(bar && bar.props && bar.props.style, 'the sweep bar is the first child while refreshing')
+  assert.equal(bar.props.style.position, 'absolute')
+  assert.match(JSON.stringify(bar), /dsh-mg-sweep/)
   assert.equal(loading.props.style.transform, 'translateY(0)')
   const footer = loading.props.children.find(
     (child) => child && Array.isArray(child.props?.children) && child.props.children.some((row) => row && row.props && row.props.type === 'button')
