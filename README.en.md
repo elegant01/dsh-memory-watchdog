@@ -1,11 +1,12 @@
 # DSH Memory Guard (dsh-memory-watchdog)
 
-A Windows commit-memory watchdog for DSH Desktop. It continuously samples system commit charge, tells you **who is eating commit memory**, gives read-only pagefile advice and a 7-day crash timeline, and warns in the UI when memory enters the warning or critical range. **Automatic restart is off by default**, and **resume-after-crash is off by default**.
+A Windows commit-memory watchdog for DSH Desktop. It continuously samples system commit charge, tells you **who is eating commit memory**, gives read-only pagefile advice and a 7-day crash timeline, and warns in the UI when memory enters the warning or critical range. **Automatic restart is off by default**, and **resume-after-crash is off by default**. It can also attribute V8 heap allocations inside the Host process **per plugin**, ranking each plugin's memory use and its leak risk.
 
 - Platform: Windows x64
 - DSH: `>=0.2.0-rc.1 <0.3`
 - Automatic restart: **off by default (opt-in)**
 - Resume after crash: **off by default (opt-in)**
+- Plugin memory: **on by default** (zero-cost radar plus periodic heap-allocation sampling)
 - Sampling: a lightweight PowerShell process owned by the plugin, using read-only performance counters
 - No WMI/CIM, no service, no scheduled task, no native addon
 
@@ -26,6 +27,11 @@ Turning the switch off immediately cancels any pending restart that has not star
 | `confirmSamples` | 3 | 1–10 | consecutive samples required for any state change |
 | `cooldownMinutes` | 30 | 5–1440 | minimum gap between restart attempts |
 | `restartGatePct` | 20 | 0–100 | restart gate; 0 disables the check |
+| `pluginMemory` | true | switch | plugin memory radar and the per-plugin view |
+| `pluginSampling` | true | switch | run heap-allocation sampling periodically |
+| `pluginSampleMinutes` | 15 | 5–120 | interval between periodic samples (minutes) |
+| `pluginSampleSeconds` | 20 | 5–120 | length of each sampling window (seconds) |
+| `pluginLeakMb` | 32 | 8–512 | per-hour growth that raises high (MiB); medium is 40% of it |
 
 Every field is volatile, so a change applies immediately without restarting DSH. Out-of-range input is clamped to the boundary, and `criticalPct` is always kept above `warningPct`. There is also an absolute backstop: at 95% the state is critical regardless of available commit.
 
@@ -44,9 +50,10 @@ Every field is volatile, so a change applies immediately without restarting DSH.
 - Samples **commit attribution** every 30 seconds: how much of the commit charge the DSH process tree holds, plus the largest consumers.
 - Reads the **pagefile and commit-limit configuration** every 5 minutes and gives read-only advice.
 - Builds a **7-day crash and memory-event timeline** every 10 minutes from DSH crash logs and the Windows System event log.
+- Counts every plugin's registered timers and listeners continuously (no sampling cost); with periodic sampling on, grabs a 20-second heap-allocation window every 15 minutes, ranks plugins by `node_modules/<package>`, and reports per-hour growth plus a leak-risk level. The card can sample on demand, export a `.heapprofile`, or write a heap snapshot.
 - Keeps the last 50 events, viewable in the card and exportable as JSON, plus a "Copy diagnostics" button.
 - Shows pressure state, action state, commit numbers, available commit, physical memory, Host RSS, cooldown, last error and the last restart record.
-- Emits an in-page toast for warning / critical / recovery / collector errors / restart outcomes / setting changes, plus a small always-visible status pill in the bottom-right corner. **Clicking the pill opens a summary popover in place** (pressure percentage with used/limit, the current state and next action, the automatic-restart capability, activity detection, the latest event and error, the DSH share, the restart-gate verdict and the three largest consumers). Click the pill again, press Escape or click outside to collapse it; the popover reads the same status as the settings card, and its Refresh button re-fetches immediately.
+- Emits an in-page toast for warning / critical / recovery / collector errors / restart outcomes / setting changes, plus a small always-visible status pill in the bottom-right corner. **Clicking the pill opens a summary popover in place** (pressure percentage with used/limit, the current state and next action, the automatic-restart capability, activity detection, the latest event and error, the DSH share, the restart-gate verdict, the three largest consumers, and plugin memory — a totals line plus the top five plugins). Click the pill again, press Escape or click outside to collapse it; the popover reads the same status as the settings card, and its Refresh button re-fetches immediately.
 - Sampler hiccups stay quiet: when a state enters unknown because samples went stale, the toast is **delayed by 2 minutes**; if samples come back within that window the transitions stay in the event log plus a "sample delays" counter (visible in the summary popover and the diagnostics text, with the worst lag) and no toast appears. A genuinely dead sampler still warns immediately.
 - Cooldown survives a plugin reload; records are stored locally.
 
@@ -81,6 +88,16 @@ When `resumeAfterCrash` is on, the plugin scans sessions after DSH restarts and 
 - The ledger lives in `$DSH_HOME/memory-watchdog/resume.json`; the card shows the shortened session id, turn, cause and attempt count.
 - A resumed turn runs with that session's existing tools and permissions — **the main thing to weigh before turning this on**.
 
+## Plugin memory (per-plugin attribution and leak verdicts)
+
+Every host plugin runs inside the same V8 isolate, and Node does not account heap per module, so this view cannot show a true "RSS per plugin". Instead it gives two signals you can reason about: **allocation attribution** and **occupancy trend**. The table is seeded from the **plugin inventory of the current profile**: at startup it scans `node_modules` for any package whose `package.json` carries a `dsh` field (scoped packages included), so every installed plugin gets a row with its resolved version even before any window exists; sampling then fills in bytes, share and growth. Plugins installed into another profile or a global directory are not in the inventory.
+
+- **Radar (on by default, no sampling cost)**: wraps `setInterval`/`clearInterval` and the `EventEmitter` methods `on`/`once`/`addListener`/`removeListener`/`off`/`removeAllListeners`, and uses the registration stack to credit each timer and listener to the package of its **direct caller**. Ownership is decided by longest-prefix match against the installed plugin directories; frames owned by this plugin, `node:` builtins and framework/local-script frames are skipped instead of being blamed on the caller. If nothing could be attributed at all the card warns and shows "attributed N / dropped M". Uninstall restores the globals completely. (Early builds attributed to the first app frame, which charged a few leaked listeners for every log line; fixed.) Uninstall restores the globals completely.
+- **Periodic sampling (on by default)**: every `pluginSampleMinutes` minutes it runs `HeapProfiler.startSampling` (`samplingInterval` 4096) for `pluginSampleSeconds` seconds and keeps only allocations that are **still alive when the window ends**, attributing them by the nearest JS frame URL to `node_modules/<package>` (including `@scope/pkg`, `app.asar/dsh/<pkg>`, `.dsh-src/<pkg>`). Native bytes with no JS frame are reported in their own column and are not split across plugins. A baseline window runs about 45 seconds after startup, and up to 24 windows are kept (15-minute cadence by default, so roughly six hours of trend).
+- **Risk levels**: with less than 10 minutes of span the verdict is unknown and nothing is concluded; beyond that a least-squares per-hour growth is compared against `pluginLeakMb` (high) and 40% of it (medium), and a timer+listener total growth of 5 also raises medium. High/medium entries list their reasons (`bytes-growth`, `handle-growth`, `short-span`, `not-enough-data`), and a high entry suggests reloading just that plugin.
+- **Three buttons**: "Sample now" grabs one window immediately; "Export heap sample" saves the last full profile as `.heapprofile` (openable in Chrome DevTools' Memory panel); "Heap snapshot" calls `v8.writeHeapSnapshot` for a `.heapsnapshot` (it briefly pauses the Host and the card says so first). Only the latest two snapshots are kept.
+- **Applies immediately**: all five switches are volatile settings and need no DSH restart; turning `pluginMemory` off fully restores the radar and stops sampling.
+
 ## How a restart is decided
 
 Automatic restart begins only when **all** of the following are true:
@@ -112,7 +129,7 @@ The restart uses a two-phase handoff. The helper first verifies the Host and Ele
 - A restart can take tens of seconds, during which DSH Desktop is unavailable.
 - With resume enabled, the plugin **injects messages into your conversations on your behalf** and lets the agent keep working; a resumed turn has that session's existing tools and permissions.
 
-The plugin does **not** guarantee protection from OOM, crashes or data loss, does not diagnose a specific leak, and is not an independent system-level watchdog.
+The plugin does **not** guarantee protection from OOM, crashes or data loss, and does not promise an object-level leak root cause; the plugin-memory view only gives per-package allocation attribution and trend levels. It is not an independent system-level watchdog.
 
 ## Permissions and process behavior
 
@@ -121,6 +138,7 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, doe
 - Capability checks and pre-handoff checks read the target executable path, creation time and command line, and verify the Host/Electron parent relationship.
 - During a restart, only the **identity-verified** Electron main process, the Host, and previously recorded descendants with the same executable are touched. The helper may suspend first and terminate only after a timeout. It does **not** use `taskkill /IM ... /T /F` and does not choose victims by memory usage.
 - Resume only calls DSH's `sessionController` `list` / `inspect` / `prompt` (with `mode: 'queue'`). It uses no process-creation API and writes nothing outside the session log.
+- Plugin-memory sampling reads allocation stacks in-process through `node:inspector`'s `HeapProfiler`; it never attaches to another process or opens a debug port, and exported profiles and snapshots are written only under `$DSH_HOME/memory-watchdog/`.
 - State, events, capability results, the resume ledger and handoff files live under `$DSH_HOME/memory-watchdog/` (default `~/.dsh/memory-watchdog/`).
 - Status, events, cancel and resume routes are registered through DSH's authenticated `ctx.connection.fetch`; responses are not cached. The client cannot supply a PID, executable, command line, script path or helper arguments, and cannot change settings.
 - The plugin makes no network requests and uploads no telemetry or diagnostics.
@@ -130,6 +148,7 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, doe
 - The resident sampling PowerShell process uses about **62–70 MB** working set and **~49 MB** commit in local measurements; sampling runs every 5 seconds and takes about 7 ms per sample.
 - One attribution round takes about **1.9 s** (every 30 s), pagefile info about **1.8 s** (every 5 minutes) and the crash timeline about **1.6 s** (every 10 minutes). All three are short-lived processes that exit when done.
 - The helper starts only for an actual handoff and does not stay resident.
+- The plugin-memory radar is plain JS counting and costs next to nothing; allocation sampling only records during the window and aggregates once at the end, so its cost scales with the allocation rate. Writing a `.heapsnapshot` pauses the Host for hundreds of milliseconds to seconds depending on heap size; the card warns first.
 
 ## Notification boundary
 
@@ -142,6 +161,8 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 - Attribution can only open processes the current user may query (about 197 of ~320 processes on the test machine), and the share is measured against total commit, so the DSH share is a lower bound.
 - Resume cannot know how much of the interrupted turn already happened, which is why the injected message demands a state check first. That reduces the risk; it does not remove it.
 - Activity checks reduce the chance of a bad restart but do not eliminate every concurrency race.
+- Plugin-memory sampling only sees allocations made inside the window that are still alive when it ends: it is evidence of "who is growing during this period", not a plugin's total occupancy. Short-lived allocations that die before GC never appear, and native bytes have no owner.
+- Client plugins live in the renderer process, which the Host-side inspector cannot reach, so they are outside the plugin-memory view; that column only covers the Host process total.
 - Different Windows / DSH launch paths may change the job flags. When the helper self-check finds it runs inside a job, it measures whether a new process can escape that job by starting two no-op children that exit immediately: if the escape works, automatic restart stays available (the card shows which escape was used); if it does not, the check fails closed. No process is ever terminated by this probe. Switching to a taskbar / Explorer launch only helps when that job came from the terminal or agent that started DSH - on the reference machine DSH creates a job for its own process tree, so the launch path changes nothing.
 - Real-world restarts, different launch paths and long-term stability still need to be verified against the release checklist.
 
@@ -171,6 +192,9 @@ The source is ESM JavaScript, PowerShell and a browser client bundle. There is n
 | `last-restart.json` | Most recent restart result (shown at startup) |
 | `capability.json` | Most recent helper capability self-check |
 | `resume.json` | Resume ledger (attempts, handled children, unreadable sessions) |
+| `plugin-memory.json` | Plugin-memory ledger (window series, verdicts, sampling metadata) |
+| `heap-<time>.heapprofile` | Allocation profile saved by "Export heap sample" |
+| `heap-<time>.heapsnapshot` | V8 heap snapshot written by "Heap snapshot" (latest two kept) |
 | `handoff/<id>/` | Two-phase handoff markers and result |
 
 ## License

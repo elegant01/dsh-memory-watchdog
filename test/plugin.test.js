@@ -365,7 +365,11 @@ test('dispose unregisters the routes, stops the collector and detaches the liste
   assert.deepEqual(io.removed.sort(), [
     '/api/memory-watchdog.cancel',
     '/api/memory-watchdog.events',
+    '/api/memory-watchdog.plugins',
+    '/api/memory-watchdog.plugins-export',
+    '/api/memory-watchdog.plugins-sample',
     '/api/memory-watchdog.resume',
+    '/api/memory-watchdog.snapshot',
     '/api/memory-watchdog.status',
   ])
   assert.equal(io.routes.size, 0)

@@ -2,7 +2,7 @@
 
 ## 一句话
 
-Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归因、分页文件只读建议与 7 天崩溃时间线；**自动重启默认关闭**、**崩溃后自动续接默认关闭**。
+Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归因、分页文件只读建议与 7 天崩溃时间线；**自动重启默认关闭**、**崩溃后自动续接默认关闭**；还能把 Host 进程内的堆分配**按插件**归因，给出每个插件的内存排名与泄漏风险分级。
 
 ## 基本信息
 
@@ -12,7 +12,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 | 显示名 | DSH Memory Guard / DSH 内存守护 |
 | 支持平台 | Windows x64 |
 | DSH 版本 | `>=0.2.0-rc.1 <0.3` |
-| 默认状态 | 监控 / 归因 / 时间线开启；自动重启与崩溃续接**关闭** |
+| 默认状态 | 监控 / 归因 / 时间线 / 插件内存雷达 / 周期采样开启；自动重启、崩溃续接**关闭** |
 | 网络 | 无网络请求、无遥测 |
 | 安装依赖 | 无服务、无计划任务、无原生 addon、无安装脚本 |
 
@@ -30,6 +30,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 开启自动重启后：危险压力下等待任务空闲，连续 3 次空闲检查 + 1.5 秒宽限期；忙碌时最多每 5 分钟提醒一次。
 - 冷却可配（默认 30 分钟），持久化；每个 critical episode 最多尝试一次；失败不自动重试。
 - **崩溃后自动续接（默认关闭）**：只续 `interrupted` 的 turn，`aborted`（你手动停止）永不续；12 小时窗口、20 秒静置、每会话每小时最多 2 次；requestId 可推导所以重复扫描不会二次注入；子代理被打断时只唤醒父会话一次。
+- **插件内存（按插件归因）**：启动时扫当前 profile 的 `node_modules` 列出所有 `package.json` 带 `dsh` 字段的插件（带版本），所以装了什么一目了然；零开销雷达统计每个插件注册的定时器与监听器，周期采样（默认开，每 15 分钟抓 20 秒窗口，启动约 45 秒后先跑一次基线）按 `node_modules/<包名>` 排名分配字节、占比与每小时增长，超过阈值判 high/medium 并给出「只重载该插件」的建议；面板可手动采样、导出 `.heapprofile`、写堆快照。
 - 采集输出有界解析；畸形数据、进程退出与 stderr 可见；异常重启使用有上限退避。
 - 重启使用两阶段交接；未收到 `go`、Host 提前退出或用户取消时，helper 不结束任何进程。
 - 旧实例未退出或端口未释放时**不拉起**新实例；新实例未在限定时间内监听原端口时本次重启记为失败，不会误报成功。
@@ -51,6 +52,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 读取目标进程可执行文件路径、创建时间、命令行并校验 Host/Electron 主进程父子关系。
 - 仅在交接时处理已校验身份的 Electron 主进程、Host 及事先记录的相同 executable 子进程；不使用宽泛 `taskkill /IM`，不按内存占用结束无关软件。
 - 崩溃续接只调用 DSH `sessionController` 的 `list` / `inspect` / `prompt`（`mode: 'queue'`），不使用任何进程创建 API。
+- 插件内存采样只在本进程内通过 `node:inspector` 的 `HeapProfiler` 读分配栈，不 attach 外部进程、不开调试端口；导出的 profile 与快照只写 `$DSH_HOME/memory-watchdog/`。
 - 通过 DSH 带认证的 `connection.fetch` 暴露状态 / 事件 / 取消 / 立即扫描接口；响应禁止缓存；客户端不能传入 PID、路径、命令行、脚本路径或 helper 参数，也不能改配置。
 - 数据仅写入 `$DSH_HOME/memory-watchdog/`（默认 `~/.dsh/memory-watchdog/`），不发起网络请求。
 
@@ -59,6 +61,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 常驻采集 PowerShell：工作集约 62–70 MB，commit 约 49 MB。
 - 归因一轮约 1.9 s（每 30 秒）、分页信息约 1.8 s（每 5 分钟）、崩溃时间线约 1.6 s（每 10 分钟）；都是短命进程，用完即退。
 - helper 只在真正交接时启动，不常驻。
+- 插件内存雷达是纯 JS 计数，开销接近零；堆采样只在窗口内记录、窗口结束聚合一次；写堆快照会让 Host 停顿数百毫秒到数秒，按钮会先提示。
 
 ## 已知边界
 
@@ -67,6 +70,8 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 归因只能打开当前用户有权限的进程（本机约 320 个中 197 个可读），DSH 占比是下界估计。
 - 续接无法知道中断前那个 turn 已经做完多少，因此注入文本强制要求先核对状态；这降低风险但不是零风险。
 - 活动检测降低误重启概率，但不消除所有并发时序竞争。
+- 插件内存采样只看窗口内分配、且结束时仍存活的对象，不代表插件总驻留；native 字节没有归属。清单只扫当前 profile 的 `node_modules`，别的 profile 或全局目录里的插件不在表里。
+- 渲染进程里的 client 插件在另一个进程，host 侧够不着，不在插件内存视图范围。
 - 真实重启、不同启动方式与长期稳定性需按发布检查清单单独验证。
 
 ## 卸载
@@ -81,4 +86,4 @@ MIT。
 
 ## English listing summary
 
-Windows commit-memory watchdog for DSH Desktop. Monitoring, commit attribution, pagefile advice, the crash timeline and in-page warnings are always on; **automatic restart and resume-after-crash are both off by default**. Thresholds (warning/critical percentages, available commit, confirmation samples, cooldown, restart gate) are configurable and apply immediately. Attribution shows how much of the commit charge the DSH process tree holds plus the top consumers, and the restart gate (20% by default) blocks a restart when DSH is not the main committer or attribution data is missing — fail closed. Read-only pagefile advice never changes system settings. The 7-day timeline merges DSH `crash-*.log` entries with Windows virtual-memory events. When restart is enabled by the user, it restarts the entire DSH Desktop only after critical commit pressure is confirmed by consecutive samples, the gate passes and the desktop is confirmed idle; restarting can discard unsent drafts and bypasses the Electron shell's native quit confirmation, while profile/session data is still flushed by the Host's graceful shutdown. When resume is enabled, only turns marked interrupted (never ones you canceled) get one injected "verify the state, then continue" message, rate-limited and idempotent, and a resumed turn keeps that session's tools and permissions. No network access or telemetry. Windows x64, DSH `>=0.2.0-rc.1 <0.3`. MIT.
+Windows commit-memory watchdog for DSH Desktop. Monitoring, commit attribution, pagefile advice, the crash timeline and in-page warnings are always on; **automatic restart and resume-after-crash are both off by default**. Thresholds (warning/critical percentages, available commit, confirmation samples, cooldown, restart gate) are configurable and apply immediately. Attribution shows how much of the commit charge the DSH process tree holds plus the top consumers, and the restart gate (20% by default) blocks a restart when DSH is not the main committer or attribution data is missing — fail closed. Read-only pagefile advice never changes system settings. The 7-day timeline merges DSH `crash-*.log` entries with Windows virtual-memory events. When restart is enabled by the user, it restarts the entire DSH Desktop only after critical commit pressure is confirmed by consecutive samples, the gate passes and the desktop is confirmed idle; restarting can discard unsent drafts and bypasses the Electron shell's native quit confirmation, while profile/session data is still flushed by the Host's graceful shutdown. When resume is enabled, only turns marked interrupted (never ones you canceled) get one injected "verify the state, then continue" message, rate-limited and idempotent, and a resumed turn keeps that session's tools and permissions. No network access or telemetry. A per-plugin memory view lists every plugin installed in the current profile (`package.json` with a `dsh` field) and ranks V8 heap allocations inside the Host by `node_modules/<package>`, with a zero-cost radar counting each plugin's timers and listeners, periodic sampling on by default, per-hour growth verdicts (high/medium), on-demand export of a `.heapprofile` and a heap snapshot. Windows x64, DSH `>=0.2.0-rc.1 <0.3`. MIT.
