@@ -43,19 +43,20 @@ node scripts/deploy.mjs --prune-legacy   # 顺带清掉旧名 dsh-memory-guard �
 ## 门禁
 
 ```sh
-npm test          # node:test，186 项
+npm test          # node:test，189 项
 npm run preflight # 包内容 + 安全规则（禁 WMI/CIM、禁宽泛 taskkill、PowerShell 必须 ASCII、开关必须默认关闭等）
 npm pack          # 产出不需要消费者构建的 tarball
 ```
 
 ## 插件内存模块
 
-- `lib/heap-sampler.js`：`packageFromUrl`（URL → `node_modules/<包名>`，覆盖 npm / `@scope` / `app.asar/dsh` / `.dsh-src`）、`aggregateProfile`（无 JS 帧的节点向上继承最近的 JS 帧，native 不摊给任何插件）、`sampleHeap`（`HeapProfiler.startSampling` + 窗口）、`takeHeapSnapshot`。
+- `lib/heap-sampler.js`：`packageFromUrl`（URL → `node_modules/<包名>`，覆盖 npm / `@scope` / `app.asar/dsh` / `.dsh-src`）、`siteFile`（帧 URL → 短文件路径，剥 `node_modules/<包>` 前缀，`node:` 返回 null）、`aggregateProfile`（无 JS 帧的节点向上继承最近的 JS 帧，native 不摊给任何插件；每个包另有 `top` 分配点，按 `url:line:functionName` 去重累加后取前 5）、`sampleHeap`（`HeapProfiler.startSampling` + 窗口，`stopSampling` 之前强制 `collectGarbage`，返回 `gcApplied/gcMs/gcReclaimedBytes`）、`takeHeapSnapshot`。
 - `lib/plugin-inventory.js`：`scriptPath`（帧 URL → 小写路径）、`ownDirectory()`（从 `import.meta.url` 反推自己装在哪，源码树下为 null）、`profileDirectoryOf`、`scanInstalledPlugins`（扫 profile 的 `node_modules`，只收 `package.json` 带 `dsh` 字段的包，含 `@scope/`）、`loadPluginInventory`。表格的行来自这份清单，所以没采样也能看到装了什么。
 - `lib/plugin-radar.js`：包装 `setInterval`/`clearInterval` 与 `EventEmitter` 的注册/注销方法，`attributeStack` 按已安装插件目录做最长前缀匹配，跳过本插件自己的帧、`node:` 内置与框架/本地脚本帧，只把直接调用者记到插件名下；`snapshot()` 带 `owners` 与 `debug{attributed,unattributed,byUrl,samples}`；`uninstall()` 原样还原全局函数。
 - `lib/plugin-memory.js`：`normalizePluginConfig`（clamp）、`growthSlope`（最小二乘，单位字节/小时）、`assessPlugins`（风险分级）与 `PluginMemory`（调度、账本 `plugin-memory.json`、窗口上限 48、快照保留 2 份）。
-- 对应测试：`test/heap-sampler.test.js`、`test/plugin-inventory.test.js`、`test/plugin-radar.test.js`、`test/plugin-memory.test.js`。
+- 对应测试：`test/heap-sampler.test.js`、`test/plugin-inventory.test.js`、`test/plugin-radar.test.js`、`test/plugin-memory.test.js`、`test/crash-history.test.js`。
 - 采样默认开（`pluginSampling` 缺省为 true），启动约 45 秒后跑一次基线窗口；窗口历史上限 24。
+- 崩溃模块来自 `lib/resources/crash-history.ps1` 的 `faults`（Application 日志 1000/1001/1002），由 `lib/crash-history.js` 的 `FAULT_CODES`/`readFaults`/`moduleName` 解析成 `crash.application-fault` 或 `crash.application-hang`，并带 `module`/`exception` 字段。
 
 ## 本机验证过的取数口径
 

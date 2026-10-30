@@ -74,7 +74,8 @@ Windows 版 DSH Desktop 的提交内存（commit charge）看门狗。它持续�
 
 - 汇总 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`（取 `--- error ---` 段首行）与系统日志中的
   `2004`（虚拟内存耗尽）、`26`（低虚拟内存提示）、`41`（意外关机）事件，默认窗口 7 天、最多 20 条。
-- 同一次事故产生的多份日志（`main` + `renderer` + `web-boot`）合并成一条，优先级 OOM > host > main > renderer > web-boot。
+- 同时读 Windows **应用日志**里的 `1000`/`1001`/`1002`（应用崩溃 / 无响应），从中解析故障模块、异常码与 fault bucket：时间线条目后面会带 `[模块名]`，标题行显示「应用故障 N 次」。故障模块只取文件名（例如 `node.exe`），正文里的其余字段按 120 字符截断。
+- 同一次事故产生的多份日志（`main` + `renderer` + `web-boot`）合并成一条，优先级 OOM > 应用故障 > host > main > renderer > 应用无响应 > web-boot。
 - 只读本机文件，不上传任何数据。日志正文可能包含本机路径，面板只显示错误首行，导出的诊断文本**不含**日志正文与会话完整 id。
 
 ## 崩溃后自动续接（默认关闭）
@@ -97,6 +98,8 @@ Windows 版 DSH Desktop 的提交内存（commit charge）看门狗。它持续�
 - **雷达（默认开，零采样开销）**：包装 `setInterval`/`clearInterval` 与 `EventEmitter` 的 `on`/`once`/`addListener`/`removeListener`/`off`/`removeAllListeners`，用注册栈把每个定时器和监听器记到**直接调用者**所属的包名下。归属按「已安装插件目录」做最长前缀匹配，本插件自己的帧、`node:` 内置以及框架/本地脚本的帧直接跳过而不是算到调用方头上（早期版本按「第一个 app 帧」归属，每写一行日志会被算成几个监听器泄漏，已修）。一次都没归因成功时面板会告警，并显示「已归因 N 次 / 丢弃 M 次」。卸载时完整还原全局函数。
 - **周期采样（默认开）**：每 `pluginSampleMinutes` 分钟用 `HeapProfiler.startSampling`（`samplingInterval` 4096）抓 `pluginSampleSeconds` 秒窗口，只保留**结束时仍然存活**的分配；按采样栈里最近的 JS 帧 URL 归到 `node_modules/<包名>`（含 `@scope/pkg`、`app.asar/dsh/<pkg>`、`.dsh-src/<pkg>`），没有 JS 帧的 native 字节单独计一栏，不摊给任何插件。启动约 45 秒后会先跑一次基线采样，之后按周期进行；窗口历史保留 24 个（默认 15 分钟一轮 ⇒ 约 6 小时的趋势）。
 - **风险分级**：窗口跨度不足 10 分钟时只给 unknown，不做结论；足够长时按最小二乘算每小时字节增长，达到 `pluginLeakMb` 判 high、达到其 40% 判 medium；定时器+监听器总量增量达到 5 也升 medium。high/medium 会列出判定理由（`bytes-growth` / `handle-growth` / `short-span` / `not-enough-data`），high 时卡片直接建议「只重载该插件」。
+- **分配点下钻**：风险为 high/medium 的插件会列出前三个热点分配点，形如 `lib/xxx.js:123 · grow · 4.2 MiB`——直接给出文件和行号，而不是只说「这个包在涨」。分配点来自采样栈的 `url:line` 去重累加，`node:` 内置帧没有文件行号，显示为 `—`。
+- **采样前强制回收**：每个窗口在 `stopSampling` 之前调用一次 `HeapProfiler.collectGarbage`，把本次窗口里的短命垃圾清掉再聚合，因此「增长」只算真正活下来的对象。面板会显示上次回收的字节数与耗时（例如「采样前强制 GC 回收 6.3 MiB（55 ms）」）。
 - **三个按钮**：「采样一次」立刻抓一个窗口；「导出堆采样」把上一次完整 profile 存成 `.heapprofile`（Chrome DevTools 的 Memory 面板可打开）；「堆快照」用 `v8.writeHeapSnapshot` 写一份 `.heapsnapshot`（会短暂停顿 Host，面板会提示耗时）。快照只保留最近 2 份。
 - **改完即生效**：五个开关都是 volatile 设置，不需要重启 DSH；`pluginMemory` 关掉后雷达会完整还原，采样也不再运行。
 
@@ -163,7 +166,7 @@ DSH 当前没有向插件暴露系统级通知或托盘 API，因此通知只存
 - 归因只能读到有权限打开的进程（本机约 320 个进程里 197 个可读），DSH 占比按系统 commit 已用量计算，因此是下界估计。
 - 崩溃续接无法区分“中断前那个 turn 已经做完一半”，因此注入文本要求先核对状态；这降低了风险但不是零风险。
 - 活动检测能降低误重启概率，但不消除所有并发时序竞争。
-- 插件内存采样只看窗口内分配、且结束时仍然存活的对象——它是「这段时间谁在涨」的证据，不是插件的总驻留量；GC 之前的短命分配不会出现，native 字节也没有归属。
+- 插件内存采样只看窗口内分配、且结束时仍然存活的对象——它是「这段时间谁在涨」的证据，不是插件的总驻留量；GC 之前的短命分配不会出现，native 字节也没有归属。分配点同理：`(native)` 帧没有 JS 文件和行号，只能按最近的 JS 调用者归档，所以热点行显示为 `—` 时说明这段内存不是某个 JS 行分配的。
 - 渲染进程里的 client 插件在另一个进程，host 侧的 inspector 够不着，不在插件内存视图范围内；面板里那一栏只给 Host 进程的总量。
 - 不同 Windows / DSH 启动方式可能改变 Job 标志；helper 自检发现自己位于 Job 内时不再一律停用，而是用两个立刻自行退出的空转子进程实测「新建进程能否脱离 Job」：能脱离就继续提供自动重启（面板标注脱离方式），不能脱离才失败关闭，全程不结束任何进程。换启动方式（任务栏 / 资源管理器）只在「这个 Job 是终端或 agent 带进来的」时才有效——本机实测 DSH 自己就会给进程树建一个 Job，此时换启动方式无效。
 - 真实环境中的重启、不同启动方式与长期稳定性仍需按发布检查清单单独验证。

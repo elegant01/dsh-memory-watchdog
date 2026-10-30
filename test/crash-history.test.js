@@ -89,6 +89,37 @@ test('the timeline drops old items and honours the limit', () => {
   assert.equal(limited.items.length, 1)
 })
 
+test('application log faults carry the faulting module and exception code', () => {
+  const now = 200000
+  const value = {
+    ok: true,
+    logs: [],
+    events: [],
+    faults: [
+      { at: 190000, id: 1000, level: 2, provider: 'Application Error', app: 'DeepSeek Harness.exe', module: 'C:\\Program Files\\node.exe', exception: '0xc0000409', bucket: null, message: 'full text' },
+      { at: 180000, id: 1001, level: 3, provider: 'Windows Error Reporting', app: 'msedgewebview2.exe', module: null, exception: null, bucket: 'bucket-123', message: 'report queued' },
+      { at: 170000, id: 1002, level: 3, provider: 'Application Hang', app: 'dsh.exe', module: null, exception: null, bucket: null, message: 'stopped responding' },
+    ],
+  }
+  const result = parseCrashHistory(value, { now, days: 7 })
+  assert.deepEqual(result.items.map((entry) => entry.code), [
+    'crash.application-fault',
+    'crash.application-fault',
+    'crash.application-hang',
+  ])
+  const fault = result.items[0]
+  assert.equal(fault.severity, 'critical')
+  assert.equal(fault.module, 'node.exe')
+  assert.equal(fault.exception, '0xc0000409')
+  assert.equal(fault.app, 'DeepSeek Harness.exe')
+  assert.equal(fault.source, 'windows-fault')
+  assert.match(fault.detail, /node\.exe/)
+  assert.equal(result.items[1].severity, 'warn')
+  assert.match(result.items[1].detail, /bucket-123/)
+  assert.equal(result.faultCount, 3)
+  assert.equal(result.lastModule, 'node.exe')
+})
+
 test('a failed probe yields a safe empty timeline', () => {
   const result = parseCrashHistory({ ok: false, error: 'Get-WinEvent failed' }, { now: 1 })
   assert.equal(result.ok, false)
