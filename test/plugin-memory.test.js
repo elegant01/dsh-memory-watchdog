@@ -152,6 +152,43 @@ test('radar-only rows for framework packages are dropped once an inventory exist
   assert.equal(rows[0].listeners, 3)
 })
 
+test('watchReloads records what a plugin kept across an unload', async () => {
+  const dir = await makeTempDir()
+  try {
+    let clock = 1_000
+    const memory = new PluginMemory({ dir: dir.dir, config: { pluginMemory: false }, now: () => clock })
+    const packages = [{ key: 'dsh-ops', name: 'dsh-ops', timers: 1, listeners: 1 }]
+    memory.radar = { installed: true, uninstall() {}, snapshot: () => ({ packages }) }
+    memory.ledger = { 'dsh-ops': { name: 'dsh-ops', lastBytes: 40 * MIB } }
+
+    memory.watchReloads()
+    assert.equal(memory.openReloads.size, 0)
+
+    packages[0].timers = 0
+    packages[0].listeners = 0
+    clock = 2_000
+    memory.watchReloads()
+    assert.equal(memory.openReloads.size, 1)
+    assert.equal(memory.openReloads.get('dsh-ops').beforeBytes, 40 * MIB)
+
+    packages[0].timers = 1
+    memory.ledger['dsh-ops'].lastBytes = 48 * MIB
+    clock = 3_000
+    memory.watchReloads()
+    assert.equal(memory.openReloads.size, 0)
+    assert.equal(memory.reloads.length, 1)
+    assert.equal(memory.reloads[0].retainedBytes, 8 * MIB)
+    assert.equal(memory.reloads[0].gapMs, 1_000)
+
+    const status = memory.status()
+    assert.equal(status.reloads.length, 1)
+    assert.equal(status.reloads[0].key, 'dsh-ops')
+    await memory.stop()
+  } finally {
+    await dir.cleanup()
+  }
+})
+
 test('disabled PluginMemory refuses to sample', async () => {
   const dir = await makeTempDir()
   try {

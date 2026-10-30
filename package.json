@@ -2,7 +2,7 @@
   "name": "dsh-memory-watchdog",
   "displayName": "DSH Memory Guard",
   "description": "Windows commit-memory watchdog for DSH Desktop: attribution, configurable thresholds, a restart gate, read-only pagefile advice, a crash timeline and opt-in restart / crash-resume.",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

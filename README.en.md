@@ -100,6 +100,21 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 - **Forced collection before sampling**: every window calls `HeapProfiler.collectGarbage` right before `stopSampling`, so short-lived garbage from the window is dropped before aggregation and growth only counts what actually survived. The card shows the last reclaim size and duration (e.g. "Forced collection before sampling reclaimed 6.3 MiB (55 ms)").
 - **Three buttons**: "Sample now" grabs one window immediately; "Export heap sample" saves the last full profile as `.heapprofile` (openable in Chrome DevTools' Memory panel); "Heap snapshot" calls `v8.writeHeapSnapshot` for a `.heapsnapshot` (it briefly pauses the Host and the card says so first). Only the latest two snapshots are kept.
 - **Applies immediately**: all five switches are volatile settings and need no DSH restart; turning `pluginMemory` off fully restores the radar and stops sampling.
+- **Reload A/B (0.5.0)**: when the radar sees a plugin's timers and listeners drop to zero (disabled in the plugin manager, or a dev hot reload) it records the moment and compares bytes once the plugin comes back, showing "Reloads observed: N" plus lines like `kept +8.0 MiB (40.0 MiB → 48.0 MiB)`. Coming back to the previous size means that reload was clean; coming back fatter means the plugin leaks across its reload path — the most direct evidence for "reload this plugin or restart DSH".
+
+## Black box (last 60 seconds of the previous run)
+
+- Every 4 seconds one line of usage, RSS, heap used and pressure state is appended to `$DSH_HOME/memory-watchdog/blackbox.json`, keeping only the last 12 points (about 48 seconds).
+- On the next start, a file written by a different pid is treated as the tail of the previous run and shown in the "Crashes and memory events" section as "Last 60 seconds before the previous exit", one line per point such as `17:20:41 · 91.2% · RSS 1.8 GiB · heap 420 MiB · critical`. Usage ≥90% is red, ≥80% amber.
+- A file written by the same pid (this plugin being hot reloaded) is ignored and never counted as a crash.
+- Writes are atomic (tmp + rename) and throttled to one per 4 seconds, so the cost is negligible and only one small file is kept on disk.
+
+## Runtime signals
+
+- **Process warnings**: counted per `warning.name` so a storm like `MaxListenersExceededWarning` shows its total and the top three names. Counted, never intercepted.
+- **Active handles**: `process.getActiveResourcesInfo()` every 5 seconds, showing the total, the change over the last minute (signed) and the top types (`Timeout`, `TCPSocketWrap`, …).
+- **Event loop delay**: `monitorEventLoopDelay` (20 ms resolution) read and reset every 5 seconds, showing p99 / mean / max — when DSH stutters you can tell whether it is memory pressure or a blocked loop.
+- Uncaught exceptions are only counted through `uncaughtExceptionMonitor`; `unhandledRejection` is **deliberately not** listened to, because attaching that listener changes Node's fatal default and would turn "should have crashed" into "did not crash".
 
 ## How a restart is decided
 
@@ -166,6 +181,8 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 - Activity checks reduce the chance of a bad restart but do not eliminate every concurrency race.
 - Plugin-memory sampling only sees allocations made inside the window that are still alive when it ends: it is evidence of "who is growing during this period", not a plugin's total occupancy. Short-lived allocations that die before GC never appear, and native bytes have no owner. Allocation sites work the same way: `(native)` frames have no JS file or line, so they are attributed to the nearest JS caller, and a site rendered as `—` means that memory was not allocated by a JS line.
 - Client plugins live in the renderer process, which the Host-side inspector cannot reach, so they are outside the plugin-memory view; that column only covers the Host process total.
+- The black box keeps one point per 4 seconds and only the latest ~48 seconds, so it shows the trend right before a crash rather than being a full time series; when a process is killed, the final point may be up to 4 seconds old.
+- Handle and event-loop signals are only valid while this process is alive and start from zero after a restart; warnings and uncaught exceptions are counted but never intercepted, so they cannot be used to "prevent" a crash.
 - Different Windows / DSH launch paths may change the job flags. When the helper self-check finds it runs inside a job, it measures whether a new process can escape that job by starting two no-op children that exit immediately: if the escape works, automatic restart stays available (the card shows which escape was used); if it does not, the check fails closed. No process is ever terminated by this probe. Switching to a taskbar / Explorer launch only helps when that job came from the terminal or agent that started DSH - on the reference machine DSH creates a job for its own process tree, so the launch path changes nothing.
 - Real-world restarts, different launch paths and long-term stability still need to be verified against the release checklist.
 
@@ -195,7 +212,8 @@ The source is ESM JavaScript, PowerShell and a browser client bundle. There is n
 | `last-restart.json` | Most recent restart result (shown at startup) |
 | `capability.json` | Most recent helper capability self-check |
 | `resume.json` | Resume ledger (attempts, handled children, unreadable sessions) |
-| `plugin-memory.json` | Plugin-memory ledger (window series, verdicts, sampling metadata) |
+| `plugin-memory.json` | Plugin-memory ledger (window series, verdicts, reload A/B, sampling metadata) |
+| `blackbox.json` | Black box: last 12 pressure samples of this run (shown as the previous run's tail after a restart) |
 | `heap-<time>.heapprofile` | Allocation profile saved by "Export heap sample" |
 | `heap-<time>.heapsnapshot` | V8 heap snapshot written by "Heap snapshot" (latest two kept) |
 | `handoff/<id>/` | Two-phase handoff markers and result |

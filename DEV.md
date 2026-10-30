@@ -43,7 +43,7 @@ node scripts/deploy.mjs --prune-legacy   # 顺带清掉旧名 dsh-memory-guard �
 ## 门禁
 
 ```sh
-npm test          # node:test，189 项
+npm test          # node:test，198 项
 npm run preflight # 包内容 + 安全规则（禁 WMI/CIM、禁宽泛 taskkill、PowerShell 必须 ASCII、开关必须默认关闭等）
 npm pack          # 产出不需要消费者构建的 tarball
 ```
@@ -57,6 +57,13 @@ npm pack          # 产出不需要消费者构建的 tarball
 - 对应测试：`test/heap-sampler.test.js`、`test/plugin-inventory.test.js`、`test/plugin-radar.test.js`、`test/plugin-memory.test.js`、`test/crash-history.test.js`。
 - 采样默认开（`pluginSampling` 缺省为 true），启动约 45 秒后跑一次基线窗口；窗口历史上限 24。
 - 崩溃模块来自 `lib/resources/crash-history.ps1` 的 `faults`（Application 日志 1000/1001/1002），由 `lib/crash-history.js` 的 `FAULT_CODES`/`readFaults`/`moduleName` 解析成 `crash.application-fault` 或 `crash.application-hang`，并带 `module`/`exception` 字段。
+
+## 黑匣子与运行时信号模块
+
+- `lib/blackbox.js`：`createBlackbox({ dir, now, intervalMs, points })` → `{ path, load, push, flush, dispose, status }`。`push` 按 `BLACKBOX_MIN_GAP_MS`（4 秒）节流并 `writeJsonAtomic` 写 `blackbox.json`；`load()` 读到 **同 pid** 的文件返回 null（插件热重载不算崩溃），异 pid 则作为 `previous = { pid, startAt, endAt, samples }`；文件损坏时 `load()` 返回 null 并把错误放进 `status().error`。运行时由 `GuardRuntime.recordBlackbox(sample, at)` 从采集样本喂入（带 `pct`/`rss`/`heapUsed`/`state`），`startSignals()` 在建完 `tickTimer` 后 `await load()`。
+- `lib/signals.js`：`createSignals({ now, intervalMs, points })` → `{ install, uninstall, snapshot, sample, installed }`（注意 `installed` 是函数）。监听 `process.on('warning')` 与 `process.on('uncaughtExceptionMonitor')`，**刻意不监听 `unhandledRejection`**（加监听器会改变 Node 的致命默认行为）；句柄用 `process.getActiveResourcesInfo()` 每 5 秒记一次（`timer.unref()`），事件循环用 `monitorEventLoopDelay({ resolution: 20 })` 每 5 秒读一次直方图再 `reset()`。
+- 热重载 A/B 在 `lib/plugin-memory.js` 的 `watchReloads()`：雷达句柄数 >0→0 记 open（`beforeBytes` 取账本 lastBytes），回到 >0 时写入 `{ at, resolvedAt, key, name, beforeBytes, afterBytes, retainedBytes, gapMs }`，上限 `PLUGIN_RELOAD_ITEMS`（10）；由 `sampleNow()` 与 `GuardRuntime.tick()`（每 5 秒）调用，`status()` 输出 `reloads` / `openReloads`。
+- 对应测试：`test/blackbox.test.js`、`test/signals.test.js`，以及 `test/plugin-memory.test.js` 里的 `watchReloads` 用例。
 
 ## 本机验证过的取数口径
 
