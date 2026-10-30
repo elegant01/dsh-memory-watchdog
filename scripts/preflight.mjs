@@ -21,6 +21,9 @@ const REQUIRED_FILES = [
   'lib/resident-watch.js',
   'lib/system-info.js',
   'lib/crash-history.js',
+  'lib/trend.js',
+  'lib/redact.js',
+  'lib/bundle.js',
   'lib/resume.js',
   'lib/client/index.js',
   'lib/resources/collector.ps1',
@@ -193,6 +196,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     const source = await readFile(routesPath, 'utf8')
     check(checks, 'routes:events', source.includes('/api/memory-watchdog.events') && /methods:\s*\['GET'\]/.test(source))
     check(checks, 'routes:resume-post', source.includes('/api/memory-watchdog.resume') && /resume-disabled/.test(source))
+    check(checks, 'routes:bundle-attachment', source.includes('/api/memory-watchdog.bundle') && /content-disposition/.test(source))
   }
 
   const clientPath = join(root, 'lib/client/index.js')
@@ -206,10 +210,18 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'client:disclosure-gate', client.includes('disclosure6') && client.includes('disclosure7'))
     check(checks, 'client:events-route', client.includes('/api/memory-watchdog.events'))
     check(checks, 'client:resume-route', client.includes('/api/memory-watchdog.resume'))
-    for (const section of ['attributionTitle', 'residentGrowLabel', 'systemTitle', 'crashTitle', 'historyTitle', 'resumeTitle', 'copyDiagnostics']) {
+    for (const section of ['attributionTitle', 'residentGrowLabel', 'systemTitle', 'crashTitle', 'historyTitle', 'trendTitle', 'resumeTitle', 'copyDiagnostics', 'bundle', 'bundleNote']) {
       check(checks, `client:section:${section}`, client.includes(section), section)
     }
     check(checks, 'client:read-only', !/-HostPid|-MainPid|scriptPath|spawnProcess|-File\s|taskkill|Stop-Process/i.test(client))
+  }
+
+  const bundlePath = join(root, 'lib/bundle.js')
+  if (await exists(bundlePath)) {
+    const source = await readFile(bundlePath, 'utf8')
+    // A bundle leaves the machine, so redaction is not optional: fail the gate
+    // if the module ever stops routing its payload through redactValue.
+    check(checks, 'bundle:redacts', /redactValue\s*\(/.test(source), 'the bundle must pass through redactValue')
   }
 
   for (const script of ['lib/attribution.js', 'lib/system-info.js', 'lib/crash-history.js']) {

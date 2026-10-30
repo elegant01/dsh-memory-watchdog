@@ -323,6 +323,27 @@ test('the cancel route reports idempotent success and a 409 during handoff', asy
   await io.temp.cleanup()
 })
 
+test('the bundle route serves a JSON attachment with no user paths', async () => {
+  const io = await startPlugin()
+  const route = io.routes.get('/api/memory-watchdog.bundle')
+  assert.ok(route)
+  assert.deepEqual(route.methods, ['GET'])
+  const response = await route.fetch(new Request('http://x/api/memory-watchdog.bundle'))
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8')
+  assert.match(response.headers.get('content-disposition'), /^attachment; filename="dsh-memory-watchdog-diagnostics-.*\.json"$/)
+  assert.match(response.headers.get('cache-control'), /no-store/)
+  const text = await response.text()
+  const body = JSON.parse(text)
+  assert.equal(body.bundle.version, 1)
+  assert.ok(Array.isArray(body.bundle.excluded))
+  // The plugin is running against a temp guard dir under the real home, so this
+  // also checks the redaction pass on a live payload.
+  assert.doesNotMatch(text, /[/\\]Users[/\\]/)
+  await io.effects[0].disposer()
+  await io.temp.cleanup()
+})
+
 test('volatile config updates reach the runtime and are reported', async () => {
   const io = await startPlugin({ autoRestart: false })
   assert.equal(io.runtime.autoRestartEnabled(), false)
@@ -363,6 +384,7 @@ test('dispose unregisters the routes, stops the collector and detaches the liste
   assert.equal(io.collector.stopped, IS_WINDOWS ? 1 : 0, 'the sampler is only owned on Windows')
   assert.equal(io.runtime.collector === null, !IS_WINDOWS)
   assert.deepEqual(io.removed.sort(), [
+    '/api/memory-watchdog.bundle',
     '/api/memory-watchdog.cancel',
     '/api/memory-watchdog.events',
     '/api/memory-watchdog.plugins',

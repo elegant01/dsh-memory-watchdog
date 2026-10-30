@@ -96,13 +96,31 @@ Windows 版 DSH Desktop 的提交内存（commit charge）看门狗。它持续�
 所有 host 插件跑在同一个 V8 isolate 里，Node 不按模块记账，所以这里给的不是「每个插件的 RSS」，而是两种能解释的信号：**分配归因**与**驻留趋势**。表格的底稿是**当前 profile 的插件清单**：启动时扫 `node_modules` 下所有 `package.json` 带 `dsh` 字段的包（`@scope/` 也算），每个插件先占一行并带上识别到的版本，所以即使还没采样也能看见装了什么；采样窗口到达后再填字节数、占比与增长。装到别的 profile 或全局目录的插件不在清单里。
 
 - **雷达（默认开，零采样开销）**：包装 `setInterval`/`clearInterval` 与 `EventEmitter` 的 `on`/`once`/`addListener`/`removeListener`/`off`/`removeAllListeners`，用注册栈把每个定时器和监听器记到**直接调用者**所属的包名下。归属按「已安装插件目录」做最长前缀匹配，本插件自己的帧、`node:` 内置以及框架/本地脚本的帧直接跳过而不是算到调用方头上（早期版本按「第一个 app 帧」归属，每写一行日志会被算成几个监听器泄漏，已修）。一次都没归因成功时面板会告警，并显示「已归因 N 次 / 丢弃 M 次」。卸载时完整还原全局函数。
-- **周期采样（默认开）**：每 `pluginSampleMinutes` 分钟用 `HeapProfiler.startSampling`（`samplingInterval` 4096）抓 `pluginSampleSeconds` 秒窗口，只保留**结束时仍然存活**的分配；按采样栈里最近的 JS 帧 URL 归到 `node_modules/<包名>`（含 `@scope/pkg`、`app.asar/dsh/<pkg>`、`.dsh-src/<pkg>`），没有 JS 帧的 native 字节单独计一栏，不摊给任何插件。启动约 45 秒后会先跑一次基线采样，之后按周期进行；窗口历史保留 24 个（默认 15 分钟一轮 ⇒ 约 6 小时的趋势）。
+- **周期采样（默认开）**：每 `pluginSampleMinutes` 分钟用 `HeapProfiler.startSampling`（`samplingInterval` 4096）抓 `pluginSampleSeconds` 秒窗口，只保留**结束时仍然存活**的分配；按采样栈里最近的 JS 帧 URL 归到 `node_modules/<包名>`（含 `@scope/pkg`、`app.asar/dsh/<pkg>`、`.dsh-src/<pkg>`），没有 JS 帧的 native 字节单独计一栏，不摊给任何插件。启动约 45 秒后会先跑一次基线采样，之后按周期进行；窗口历史保留 48 个（默认 15 分钟一轮 ⇒ 约 12 小时的趋势）。
 - **风险分级**：窗口跨度不足 10 分钟时只给 unknown，不做结论；足够长时按最小二乘算每小时字节增长，达到 `pluginLeakMb` 判 high、达到其 40% 判 medium；定时器+监听器总量增量达到 5 也升 medium。high/medium 会列出判定理由（`bytes-growth` / `handle-growth` / `short-span` / `not-enough-data`），high 时卡片直接建议「只重载该插件」。
 - **分配点下钻**：风险为 high/medium 的插件会列出前三个热点分配点，形如 `lib/xxx.js:123 · grow · 4.2 MiB`——直接给出文件和行号，而不是只说「这个包在涨」。分配点来自采样栈的 `url:line` 去重累加，`node:` 内置帧没有文件行号，显示为 `—`。
 - **采样前强制回收**：每个窗口在 `stopSampling` 之前调用一次 `HeapProfiler.collectGarbage`，把本次窗口里的短命垃圾清掉再聚合，因此「增长」只算真正活下来的对象。面板会显示上次回收的字节数与耗时（例如「采样前强制 GC 回收 6.3 MiB（55 ms）」）。
-- **三个按钮**：「采样一次」立刻抓一个窗口；「导出堆采样」把上一次完整 profile 存成 `.heapprofile`（Chrome DevTools 的 Memory 面板可打开）；「堆快照」用 `v8.writeHeapSnapshot` 写一份 `.heapsnapshot`（会短暂停顿 Host，面板会提示耗时）。快照只保留最近 2 份。
+- **首次注册时刻**：雷达第一次看到某个包注册定时器或监听器时会记一个时间戳，配合 `process.uptime()` 反推的宿主启动时刻算出「启动后多久首次注册」，显示在插件行下面，时间早的排前面。**这是首次可见注册时刻，不是精确加载耗时**——一个插件如果在启动后很久才注册第一个定时器，它的数字就是那个「很久」，而不是它被 require 的耗时。
+- **三个按钮**：「采样一次」立刻抓一个窗口；「导出堆采样」把上一次完整 profile 存成 `.heapprofile`（Chrome DevTools 的 Memory 面板可打开）；「堆快照」用 `v8.writeHeapSnapshot` 写一份 `.heapsnapshot`（会短暂停顿 Host，面板会提示耗时）。快照只保留最近 2 份。旁边还有「下载诊断包」，见下面「诊断包」一节。
 - **改完即生效**：五个开关都是 volatile 设置，不需要重启 DSH；`pluginMemory` 关掉后雷达会完整还原，采样也不再运行。
 - **热重载 A/B（0.5.0）**：雷达发现某插件的定时器与监听器从有变无（在插件管理器里停用，或开发时热重载）就记一笔，等它重新出现再比对字节，显示「重载 N 次」与每条的 `保留字节差 +8.0 MiB（40.0 MiB → 48.0 MiB）`。重载后字节回到原值说明这次重载是干净的，越重载越大则是该插件在重载路径上漏了东西——这是「该重载还是该重启」最直接的证据。
+
+## 长期趋势（14 天）
+
+- 每次采样除了写黑匣子，还按**本地时间**丢进小时桶：`n` / `sum` / `max` / 一份 2% 宽的定长直方图 / 动作与预警计数。直方图让 p50 与 p95 能算出来，而磁盘上**不留任何原始样本**——这是它敢保留 14 天的原因。
+- `$DSH_HOME/memory-watchdog/trend.json` 每 10 分钟滚动写一次（一秒一 tick 显然不能每次都重写整个文件），原子写 tmp + rename。崩溃最多丢最后十分钟，不是丢整个文件。
+- 面板的「长期趋势」区显示最近 7 天：每天一行，用 `ShareRow` 画当天最高占用率与当天动作次数（≥80% 标黄、≥90% 标红），不引第三方图表库。上面一行摘要写「近 14 天 · 采样 N 点 · 最高 X%」。
+- 过期桶按「今天零点往前 13 天」裁剪，所以保留窗口是滚动的，不是从启动算的。
+- 一个桶的直方图如果丢了（文件被手改、旧版本写的），整桶按无效丢弃而不是读成 0——否则趋势线会被静默压平，看起来像「那天很空闲」。
+- 时间分桶跟本地钟走：UTC+05:30 的机器也得是一小时一桶，不能按 UTC 切。
+
+## 诊断包（一键下载）
+
+- 面板右下「下载诊断包」按钮打出一个 JSON 附件，文件名形如 `dsh-memory-watchdog-diagnostics-2026-10-30T15-04-11-000Z.json`。内容是状态摘要、最近 50 条事件、`trend.json`、`plugin-memory.json`、`blackbox.json` 与 `capability.json`。
+- **不含**堆采样（`.heapprofile`）、堆快照（`.heapsnapshot`）与任何日志正文。堆文件里是原始堆内容，再怎么脱敏都不该外发——包里有一个 `bundle.excluded` 字段把这条明写出来，省得别人猜为什么缺东西。
+- 打包前整个 payload 过一遍 `lib/redact.js`：`C:\Users\<name>`、`/Users/<name>`、`/home/<name>` 一律替换成 `~`，session id 只留前 8 位加省略号。这是**唯一会把本机信息带出去**的通道，所以脱敏规则有独立测试（`test/redact.test.js`），preflight 也会在 `lib/bundle.js` 不再调用 `redactValue` 时直接失败。
+- 缺文件不算失败：没写过的 `trend.json` 会在包里记成 `{ ok: false, error: "not written yet" }`，其余内容照常给你。
+- 走 `GET /api/memory-watchdog.bundle`，响应带 `content-disposition: attachment`，浏览器直接存盘而不是渲染。没有引入压缩依赖，就是一个可读的 JSON。
 
 ## 黑匣子（上次运行最后 60 秒）
 

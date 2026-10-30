@@ -616,6 +616,22 @@ test('status exposes attribution, pagefile advice and the crash timeline', async
   await h.cleanup()
 })
 
+test('samples and pressure transitions feed the long-term trend', async () => {
+  const h = await harness()
+  assert.notEqual(h.rt.trend, null, 'the trend log is wired into the runtime')
+  await driveToWarning(h.feed)
+  const status = h.rt.status()
+  assert.notEqual(status.trend, null)
+  assert.equal(status.trend.ok, true)
+  assert.ok(status.trend.sampleCount >= 6, 'every accepted sample becomes a trend point')
+  assert.equal(status.trend.buckets.length, 1, 'samples a few seconds apart land in one hourly bucket')
+  const bucket = status.trend.buckets[0]
+  assert.equal(bucket.max, 82)
+  assert.equal(bucket.warnings, 1, 'the warning transition is counted once')
+  assert.equal(bucket.actions, 0)
+  await h.cleanup()
+})
+
 test('crash resume scans are scheduled after startup and follow the deferred deadline', async () => {
   let handle = null
   const scans = []
