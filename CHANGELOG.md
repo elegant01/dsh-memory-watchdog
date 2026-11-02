@@ -2,6 +2,13 @@
 
 本文件记录 `dsh-memory-watchdog` 的可见变化。版本号跟着 `package.json` 走。
 
+## 0.8.0
+
+- 新增：堆快照对比。插件区多一个「对比最近两次快照」按钮，走 `POST /api/memory-watchdog.snapshot-diff`：读取最近两份 `.heapsnapshot` 的 `snapshot` 段与 `nodes`，按构造器名汇总 `self_size`，列出变化最大的 10 个（形如 `Map · 4.0 MiB → 6.0 MiB（+2.0 MiB）· 12 → 18 个`），并给出总字节差与节点差。负数表示这份快照里变小了。
+- 边界：解析按 1 MiB 分块流式读取，跳过 `edges` 与未被节点引用的字符串，峰值只保留一份节点数组；同一时间只允许一份对比（`diff-busy`），不足两份返回 `need-two-snapshots`。文件上限 1.5 GiB、节点上限 4000 万、超时 120 秒。
+- 边界：只读 summary 段，不含 edges/retainers，所以它回答的是「哪类对象变多/变少」，不是「谁在引用它」。hidden/synthetic 节点与 `(` 开头的内部名不计入。
+- 变更：插件版本升到 0.8.0；测试 242 项、preflight 613 checks。
+
 ## 0.7.0
 
 - 新增：崩溃前黑匣子归并。崩溃时间线条目若与上次运行的黑匣子尾部相差不超过 2 分钟，条目直接挂上最多 12 个点（`crashes.items[].trail`），面板在条目下展开「崩溃前黑匣子」，逐点显示提交占用、堆与外部内存。关联是纯时间对齐，不改采集。

@@ -344,6 +344,26 @@ test('the bundle route serves a JSON attachment with no user paths', async () =>
   await io.temp.cleanup()
 })
 
+test('the snapshot diff route reports when two snapshots are missing', async () => {
+  const io = await startPlugin()
+  const route = io.routes.get('/api/memory-watchdog.snapshot-diff')
+  assert.ok(route)
+  assert.deepEqual(route.methods, ['POST'])
+  const response = await route.fetch(
+    new Request('http://x/api/memory-watchdog.snapshot-diff', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }),
+  )
+  assert.equal(response.status, 409)
+  const body = await response.json()
+  assert.equal(body.ok, false)
+  assert.equal(body.code, 'need-two-snapshots')
+  await io.effects[0].disposer()
+  await io.temp.cleanup()
+})
+
 test('volatile config updates reach the runtime and are reported', async () => {
   const io = await startPlugin({ autoRestart: false })
   assert.equal(io.runtime.autoRestartEnabled(), false)
@@ -392,6 +412,7 @@ test('dispose unregisters the routes, stops the collector and detaches the liste
     '/api/memory-watchdog.plugins-sample',
     '/api/memory-watchdog.resume',
     '/api/memory-watchdog.snapshot',
+    '/api/memory-watchdog.snapshot-diff',
     '/api/memory-watchdog.status',
   ])
   assert.equal(io.routes.size, 0)
