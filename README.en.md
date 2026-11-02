@@ -75,6 +75,7 @@ Every field is volatile, so a change applies immediately without restarting DSH.
 - Also reads Windows **Application** log events `1000`/`1001`/`1002` (application crash / hang) and extracts the faulting module, exception code and fault bucket: timeline entries get a `[module]` suffix and the header shows "{n} application faults". The module is reduced to its file name (e.g. `node.exe`) and the rest of the message is capped at 120 characters.
 - Multiple logs from one incident (`main` + `renderer` + `web-boot`) are merged into a single entry, prioritized OOM > application fault > host > main > renderer > application hang > web-boot.
 - Everything is read locally and nothing is uploaded. Log bodies can contain local paths, so the card only shows the first error line and the copied diagnostics contain **no** log bodies and no full session ids.
+- **Pre-crash tail and OOM class**: when a previous-run black box ends within 2 minutes of a crash entry, that entry carries up to 12 tail points (`trail`) and the card expands "Black box before the crash" under it, showing usage, heap and external memory per point. The last point also classifies the crash: heap usage ≥95% is `oom-heap`; `external + arrayBuffers` ≥1 GiB and ≥50% of RSS is `oom-external`; commit usage ≥90% is `oom-system`; if none matches, no conclusion is drawn. The class is a heuristic, not evidence from a crash dump.
 
 ## Resume after a crash (off by default)
 
@@ -98,10 +99,18 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 - **Risk levels**: with less than 10 minutes of span the verdict is unknown and nothing is concluded; beyond that a least-squares per-hour growth is compared against `pluginLeakMb` (high) and 40% of it (medium), and a timer+listener total growth of 5 also raises medium. High/medium entries list their reasons (`bytes-growth`, `handle-growth`, `short-span`, `not-enough-data`), and a high entry suggests reloading just that plugin.
 - **Allocation-site drill-down**: entries at high/medium level list their top three hot allocation sites as `lib/xxx.js:123 · grow · 4.2 MiB`, so you get the file and line instead of just "this package is growing". Sites are accumulated per unique sample-stack `url:line`; `node:` builtin frames have no file or line and render as `—`.
 - **Forced collection before sampling**: every window calls `HeapProfiler.collectGarbage` right before `stopSampling`, so short-lived garbage from the window is dropped before aggregation and growth only counts what actually survived. The card shows the last reclaim size and duration (e.g. "Forced collection before sampling reclaimed 6.3 MiB (55 ms)").
+- **Sampling self-monitoring**: each window records its actual duration, the `process.cpuUsage()` delta and system commit before/after. When CPU usage exceeds 60% or commit grows by ≥256 MiB, the card says "this sample may have influenced the result"; otherwise it shows a line such as "Last sample cost: 20 s · CPU 12% · commit +0.0 MiB". This is informational only and never downgrades a verdict.
 - **First seen**: the first time the radar sees a package register a timer or listener it stamps a timestamp; combined with the host boot instant derived from `process.uptime()` that yields "how long after boot this package first registered", shown under the plugin row with earliest first. **This is the first visible registration, not an exact load cost** — a plugin that registers its first timer long after boot shows that long gap, not the time its module took to `require`.
 - **Three buttons**: "Sample now" grabs one window immediately; "Export heap sample" saves the last full profile as `.heapprofile` (openable in Chrome DevTools' Memory panel); "Heap snapshot" calls `v8.writeHeapSnapshot` for a `.heapsnapshot` (it briefly pauses the Host and the card says so first). Only the latest two snapshots are kept. A fourth button, "Download diagnostics", is described under "Diagnostics bundle" below.
 - **Applies immediately**: all five switches are volatile settings and need no DSH restart; turning `pluginMemory` off fully restores the radar and stops sampling.
 - **Reload A/B (0.5.0)**: when the radar sees a plugin's timers and listeners drop to zero (disabled in the plugin manager, or a dev hot reload) it records the moment and compares bytes once the plugin comes back, showing "Reloads observed: N" plus lines like `kept +8.0 MiB (40.0 MiB → 48.0 MiB)`. Coming back to the previous size means that reload was clean; coming back fatter means the plugin leaks across its reload path — the most direct evidence for "reload this plugin or restart DSH".
+
+## Heap near-limit and external growth
+
+- Every pressure sample now also records `heapUsed` / `heapTotal` / `external` / `arrayBuffers`, both in the black box and in the `heap` part of the status.
+- Three consecutive samples at ≥90% heap usage raise one "heap near limit" toast; it only resets below 85%, so one high-pressure episode does not toast every 5 seconds.
+- External memory (`external + arrayBuffers`) is sampled as one marker per 60 seconds; a rate is only reported once the span reaches 30 minutes (a single jump is not growth). A rate ≥200 MB/h raises one "native allocation growth" toast and it resets below 100 MB/h.
+- Both are informational only: they never downgrade pressure, arm a restart or change a leak verdict. The thresholds are constants (`HEAP_NEAR_LIMIT_PCT` / `HEAP_EXTERNAL_GROWTH_MB`) and do not follow `criticalPct`.
 
 ## Long-term trend (14 days)
 
@@ -125,6 +134,7 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 - Every 4 seconds one line of usage, RSS, heap used and pressure state is appended to `$DSH_HOME/memory-watchdog/blackbox.json`, keeping only the last 12 points (about 48 seconds).
 - On the next start, a file written by a different pid is treated as the tail of the previous run and shown in the "Crashes and memory events" section as "Last 60 seconds before the previous exit", one line per point such as `17:20:41 · 91.2% · RSS 1.8 GiB · heap 420 MiB · critical`. Usage ≥90% is red, ≥80% amber.
 - A file written by the same pid (this plugin being hot reloaded) is ignored and never counted as a crash.
+- When a crash entry falls within ±2 minutes of the tail's end time, it carries that tail and its OOM class directly (see "Crash timeline").
 - Writes are atomic (tmp + rename) and throttled to one per 4 seconds, so the cost is negligible and only one small file is kept on disk.
 
 ## Runtime signals

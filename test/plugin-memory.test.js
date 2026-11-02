@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { assessPlugins, growthSlope, normalizePluginConfig, PluginMemory } from '../lib/plugin-memory.js'
+import { assessPlugins, growthSlope, normalizePluginConfig, PluginMemory, summarizeSamplingCost } from '../lib/plugin-memory.js'
 import { makeTempDir } from './helpers.js'
 
 const MIB = 1024 * 1024
@@ -200,4 +200,35 @@ test('disabled PluginMemory refuses to sample', async () => {
   } finally {
     await dir.cleanup()
   }
+})
+
+test('summarizeSamplingCost marks CPU-heavy and commit-growing windows as intrusive', () => {
+  const normal = summarizeSamplingCost({
+    elapsedMs: 20_000,
+    cpu: { userMs: 1200, systemMs: 400, pct: 8 },
+    commitBefore: 30 * 1024 * MIB,
+    commitAfter: 30 * 1024 * MIB + 16 * MIB,
+  })
+  assert.equal(normal.intrusive, false)
+  assert.deepEqual(normal.reasons, [])
+  assert.equal(normal.commitGrowthBytes, 16 * MIB)
+  assert.equal(normal.elapsedMs, 20_000)
+
+  const cpu = summarizeSamplingCost({ elapsedMs: 20_000, cpu: { pct: 75 }, commitBefore: 1, commitAfter: 2 })
+  assert.equal(cpu.intrusive, true)
+  assert.deepEqual(cpu.reasons, ['cpu'])
+
+  const commit = summarizeSamplingCost({
+    elapsedMs: 20_000,
+    cpu: { pct: 5 },
+    commitBefore: 10 * MIB,
+    commitAfter: 10 * MIB + 300 * MIB,
+  })
+  assert.equal(commit.intrusive, true)
+  assert.deepEqual(commit.reasons, ['commit'])
+
+  const unknown = summarizeSamplingCost({ elapsedMs: 20_000, cpu: null, commitBefore: null, commitAfter: null })
+  assert.equal(unknown.intrusive, false)
+  assert.equal(unknown.commitGrowthBytes, null)
+  assert.equal(unknown.cpuPct, null)
 })

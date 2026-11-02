@@ -43,24 +43,26 @@ node scripts/deploy.mjs --prune-legacy   # 顺带清掉旧名 dsh-memory-guard �
 ## 门禁
 
 ```sh
-npm test          # node:test，198 项
+npm test          # node:test，236 项
 npm run preflight # 包内容 + 安全规则（禁 WMI/CIM、禁宽泛 taskkill、PowerShell 必须 ASCII、开关必须默认关闭等）
 npm pack          # 产出不需要消费者构建的 tarball
 ```
 
 ## 插件内存模块
 
-- `lib/heap-sampler.js`：`packageFromUrl`（URL → `node_modules/<包名>`，覆盖 npm / `@scope` / `app.asar/dsh` / `.dsh-src`）、`siteFile`（帧 URL → 短文件路径，剥 `node_modules/<包>` 前缀，`node:` 返回 null）、`aggregateProfile`（无 JS 帧的节点向上继承最近的 JS 帧，native 不摊给任何插件；每个包另有 `top` 分配点，按 `url:line:functionName` 去重累加后取前 5）、`sampleHeap`（`HeapProfiler.startSampling` + 窗口，`stopSampling` 之前强制 `collectGarbage`，返回 `gcApplied/gcMs/gcReclaimedBytes`）、`takeHeapSnapshot`。
+- `lib/heap-sampler.js`：`packageFromUrl`（URL → `node_modules/<包名>`，覆盖 npm / `@scope` / `app.asar/dsh` / `.dsh-src`）、`siteFile`（帧 URL → 短文件路径，剥 `node_modules/<包>` 前缀，`node:` 返回 null）、`aggregateProfile`（无 JS 帧的节点向上继承最近的 JS 帧，native 不摊给任何插件；每个包另有 `top` 分配点，按 `url:line:functionName` 去重累加后取前 5）、`sampleHeap`（`HeapProfiler.startSampling` + 窗口，`stopSampling` 之前强制 `collectGarbage`，返回 `gcApplied/gcMs/gcReclaimedBytes` 与窗口前后的 `process.cpuUsage()` 差值 `cpu{userMs,systemMs,totalMs,pct}`）、`takeHeapSnapshot`。
 - `lib/plugin-inventory.js`：`scriptPath`（帧 URL → 小写路径）、`ownDirectory()`（从 `import.meta.url` 反推自己装在哪，源码树下为 null）、`profileDirectoryOf`、`scanInstalledPlugins`（扫 profile 的 `node_modules`，只收 `package.json` 带 `dsh` 字段的包，含 `@scope/`）、`loadPluginInventory`。表格的行来自这份清单，所以没采样也能看到装了什么。
 - `lib/plugin-radar.js`：包装 `setInterval`/`clearInterval` 与 `EventEmitter` 的注册/注销方法，`attributeStack` 按已安装插件目录做最长前缀匹配，跳过本插件自己的帧、`node:` 内置与框架/本地脚本帧，只把直接调用者记到插件名下；`snapshot()` 带 `owners` 与 `debug{attributed,unattributed,byUrl,samples}`；`uninstall()` 原样还原全局函数。
-- `lib/plugin-memory.js`：`normalizePluginConfig`（clamp）、`growthSlope`（最小二乘，单位字节/小时）、`assessPlugins`（风险分级）与 `PluginMemory`（调度、账本 `plugin-memory.json`、窗口上限 48、快照保留 2 份）。
+- `lib/plugin-memory.js`：`normalizePluginConfig`（clamp）、`growthSlope`（最小二乘，单位字节/小时）、`assessPlugins`（风险分级）、`summarizeSamplingCost`（CPU/commit 增长 → `intrusive` 与 `reasons`）与 `PluginMemory`（调度、账本 `plugin-memory.json`、窗口上限 48、快照保留 2 份、`sampling.lastCost`）。
 - 对应测试：`test/heap-sampler.test.js`、`test/plugin-inventory.test.js`、`test/plugin-radar.test.js`、`test/plugin-memory.test.js`、`test/crash-history.test.js`。
-- 采样默认开（`pluginSampling` 缺省为 true），启动约 45 秒后跑一次基线窗口；窗口历史上限 24。
+- 采样默认开（`pluginSampling` 缺省为 true），启动约 45 秒后跑一次基线窗口；窗口历史上限 48。
 - 崩溃模块来自 `lib/resources/crash-history.ps1` 的 `faults`（Application 日志 1000/1001/1002），由 `lib/crash-history.js` 的 `FAULT_CODES`/`readFaults`/`moduleName` 解析成 `crash.application-fault` 或 `crash.application-hang`，并带 `module`/`exception` 字段。
 
 ## 黑匣子与运行时信号模块
 
-- `lib/blackbox.js`：`createBlackbox({ dir, now, intervalMs, points })` → `{ path, load, push, flush, dispose, status }`。`push` 按 `BLACKBOX_MIN_GAP_MS`（4 秒）节流并 `writeJsonAtomic` 写 `blackbox.json`；`load()` 读到 **同 pid** 的文件返回 null（插件热重载不算崩溃），异 pid 则作为 `previous = { pid, startAt, endAt, samples }`；文件损坏时 `load()` 返回 null 并把错误放进 `status().error`。运行时由 `GuardRuntime.recordBlackbox(sample, at)` 从采集样本喂入（带 `pct`/`rss`/`heapUsed`/`state`），`startSignals()` 在建完 `tickTimer` 后 `await load()`。
+- `lib/blackbox.js`：`createBlackbox({ dir, now, intervalMs, points })` → `{ path, load, push, flush, dispose, status }`。`push` 按 `BLACKBOX_MIN_GAP_MS`（4 秒）节流并 `writeJsonAtomic` 写 `blackbox.json`；`load()` 读到 **同 pid** 的文件返回 null（插件热重载不算崩溃），异 pid 则作为 `previous = { pid, startAt, endAt, samples }`；文件损坏时 `load()` 返回 null 并把错误放进 `status().error`。运行时由 `GuardRuntime.recordBlackbox(sample, at)` 从采集样本喂入（带 `pct`/`rss`/`heapUsed`/`heapTotal`/`external`/`arrayBuffers`/`state`），`startSignals()` 在建完 `tickTimer` 后 `await load()`。
+- `lib/heap-watch.js`：`createHeapWatch` 维护最近样本与 60 秒一个的外部内存标记，`status()` 给出 `nearLimit`（连续 3 样本 ≥90%，<85% 复位）、`ratioPct` 与 `externalRateMbPerHour`（跨度 ≥30 分钟才算）；`classifyCrashTrail(trail)` 按末点分 `oom-heap` / `oom-external` / `oom-system`。`GuardRuntime.status()` 用它生成 `heap` 与 `crashes.items[].oom`。
+- `lib/crash-history.js` 的 `attachCrashTrail(items, previous, {windowMs, points})`：把异 pid 黑匣子尾部挂到 2 分钟内最近的崩溃条目，返回克隆数组；纯时间对齐，不改输入对象。
 - `lib/signals.js`：`createSignals({ now, intervalMs, points })` → `{ install, uninstall, snapshot, sample, installed }`（注意 `installed` 是函数）。监听 `process.on('warning')` 与 `process.on('uncaughtExceptionMonitor')`，**刻意不监听 `unhandledRejection`**（加监听器会改变 Node 的致命默认行为）；句柄用 `process.getActiveResourcesInfo()` 每 5 秒记一次（`timer.unref()`），事件循环用 `monitorEventLoopDelay({ resolution: 20 })` 每 5 秒读一次直方图再 `reset()`。
 - 热重载 A/B 在 `lib/plugin-memory.js` 的 `watchReloads()`：雷达句柄数 >0→0 记 open（`beforeBytes` 取账本 lastBytes），回到 >0 时写入 `{ at, resolvedAt, key, name, beforeBytes, afterBytes, retainedBytes, gapMs }`，上限 `PLUGIN_RELOAD_ITEMS`（10）；由 `sampleNow()` 与 `GuardRuntime.tick()`（每 5 秒）调用，`status()` 输出 `reloads` / `openReloads`。
 - 对应测试：`test/blackbox.test.js`、`test/signals.test.js`，以及 `test/plugin-memory.test.js` 里的 `watchReloads` 用例。

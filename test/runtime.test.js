@@ -4,6 +4,8 @@ import { GuardRuntime } from '../lib/runtime.js'
 import { COOLDOWN_MS, RESUME_SCAN_DELAYS_MS, STALE_AFTER_MS, STALE_NOTICE_DELAY_MS } from '../lib/constants.js'
 import { driveToCritical, driveToWarning, makeClock, makeTempDir, primeNormal, sample, settle, GIB } from './helpers.js'
 
+const MIB = 1024 * 1024
+
 function fakeCollector() {
   return {
     started: 0,
@@ -150,6 +152,7 @@ async function harness(options = {}) {
     sessionController: options.sessionController,
     resume: options.resume,
   }
+  if (options.heapWatch !== undefined) deps.heapWatch = options.heapWatch
   const rt = new GuardRuntime({
     ctx: { get: () => undefined },
     rawConfig,
@@ -749,5 +752,65 @@ test('the growth threshold can be lowered from settings and reaches the runtime'
   h.rt.onConfigUpdate(['residentGrowMb'])
   assert.equal(h.rt.thresholds.residentGrowMb, 128)
   assert.equal(h.rt.thresholds.residentGrowBytes, 128 * 1024 * 1024)
+  await h.cleanup()
+})
+
+test('heap warnings fire once per episode and the heap snapshot is exposed', async () => {
+  const fake = {
+    nearLimit: true,
+    rateMb: null,
+    samples: 0,
+    record() {
+      this.samples += 1
+    },
+    status() {
+      return {
+        nearLimit: this.nearLimit,
+        ratioPct: this.nearLimit ? 92 : 84,
+        heapUsed: 920 * MIB,
+        heapTotal: 1000 * MIB,
+        rss: 1500 * MIB,
+        externalBytes: null,
+        arrayBuffersBytes: null,
+        externalRateMbPerHour: this.rateMb,
+        samples: 3,
+        thresholds: { nearLimitPct: 90, recoverPct: 85, sampleCount: 3, externalGrowthMb: 200, externalSpanMs: 1800000 },
+      }
+    },
+  }
+  const h = await harness({ heapWatch: fake })
+  await h.feed(50)
+  await h.feed(51)
+  let warnings = h.rt.status().notices.filter((notice) => notice.code === 'heap.near-limit')
+  assert.equal(warnings.length, 1)
+  assert.equal(warnings[0].params.pct, 92)
+  assert.equal(h.rt.status().heap.nearLimit, true)
+  assert.ok(fake.samples >= 2, 'live samples feed the watch')
+
+  await h.feed(52)
+  warnings = h.rt.status().notices.filter((notice) => notice.code === 'heap.near-limit')
+  assert.equal(warnings.length, 1, 'no repeat while the episode lasts')
+
+  fake.nearLimit = false
+  await h.feed(40, { advance: 300_000 })
+  fake.nearLimit = true
+  await h.feed(41, { advance: 300_000 })
+  assert.equal(h.rt.status().notices.filter((notice) => notice.code === 'heap.near-limit').length, 2)
+
+  fake.nearLimit = false
+  fake.rateMb = 250
+  await h.feed(50)
+  await h.feed(51)
+  const growth = h.rt.status().notices.filter((notice) => notice.code === 'heap.external-growth')
+  assert.equal(growth.length, 1)
+  assert.equal(growth[0].params.rateMb, 250)
+  await h.feed(52)
+  assert.equal(h.rt.status().notices.filter((notice) => notice.code === 'heap.external-growth').length, 1)
+
+  fake.rateMb = 50
+  await h.feed(53)
+  fake.rateMb = 250
+  await h.feed(54)
+  assert.equal(h.rt.status().notices.filter((notice) => notice.code === 'heap.external-growth').length, 2)
   await h.cleanup()
 })
