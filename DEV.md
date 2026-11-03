@@ -40,6 +40,27 @@ node scripts/deploy.mjs --prune-legacy   # 顺带清掉旧名 dsh-memory-guard �
 
 宿主会为热重载监视 `node_modules/dsh-memory-watchdog`，目录被占用时 pnpm 换版本会失败。要升级先发版、再 `npm run hmr:off`、最后走 `dsh plugin add`。
 
+## 发布
+
+`.github/workflows/release.yml` 一次跑三路，触发条件是 `push main`、GitHub Release 发布、或手动 `workflow_dispatch`：
+
+| 去处 | 触发 | 说明 |
+| --- | --- | --- |
+| GitHub Packages | push / release | 临时改名成 `@elegant01/dsh-memory-watchdog` 后发布，仓库页面侧栏的 Packages 卡片来自这一路 |
+| npmjs | push / release | 走 Trusted Publisher（OIDC），`npm publish --provenance`，不需要 token |
+| Release 附件 | release 发布 | `npm pack` 出的 tarball 挂到该 Release 上 |
+
+所以发版的完整动作就是：改 `package.json` 的 `version`（以及 CHANGELOG）→ 提交 → `git push`。两路发布都先查「这个版本是不是已经在那儿了」，在就跳过，重复 push 不会报 `E409`/`EPUBLISHCONFLICT`。
+
+补挂历史 Release 的 tarball（例如某个 tag 当时没挂上）：
+
+```sh
+gh workflow run release.yml -f tag=v0.8.0   # 检出该 tag、校验版本号一致、npm pack、gh release upload --clobber
+gh workflow run release.yml -f dryRun=true  # 只跑门禁，不发布
+```
+
+`workflow_dispatch` 补挂要求 tag 与 `package.json` 的版本号严格对应（`v0.8.0` ↔ `0.8.0`），否则 job 直接失败，免得把 main 的 HEAD 打成旧 tag 的附件。
+
 ## 门禁
 
 ```sh

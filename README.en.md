@@ -230,6 +230,8 @@ npm pack          # build a tarball that needs no consumer build step
 
 The source is ESM JavaScript, PowerShell and a browser client bundle. There is no TypeScript build, native addon or install script.
 
+Releases are handled by `.github/workflows/release.yml`: pushing `main` or publishing a Release publishes to npmjs (OIDC, with provenance) and GitHub Packages, and attaches the `npm pack` tarball to the Release. See the "发布" section of [DEV.md](./DEV.md) for the release steps and the command that backfills a historical Release.
+
 ### Data files
 
 | File | Purpose |

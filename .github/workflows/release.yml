@@ -1,18 +1,29 @@
 name: Publish Package
 
-# 发布 npm 包（照 dsh-codearts 的形式）：
+# 三路发布（照 dsh-codearts + dsh-honey-guard 的形式）：
+#   - GitHub Packages：用 GITHUB_TOKEN 发布 @<owner>/dsh-memory-watchdog，
+#     仓库页面侧栏的 Packages 卡片就来自这一路
 #   - npmjs：用 npm Trusted Publisher（OIDC）发布 dsh-memory-watchdog，免 token、免 OTP
-#   - 打 GitHub Release 即触发；也可在 Actions 里手动 workflow_dispatch
+#   - Release 附件：打 release 时把 `npm pack` 出来的 tarball 挂到该 release 上
+#
+# 触发：push main（最省事，改完版本号推上去就发）/ GitHub Release 发布 / 手动 workflow_dispatch
+#
+# 幂等：push main 是最常用的触发方式，而同一个版本在同一个 registry 上只能发一次，
+# 所以两路发布都先查「这个版本是不是已经在那儿了」，在就跳过。
 #
 # 前置（一次性，包存在之后才配得了）：
 #   npmjs.com → 包页面 → Settings → Publishing access → Trusted Publisher
 #   → GitHub Actions / Owner: elegant01 / Repository: dsh-memory-watchdog
 #   → Workflow filename: release.yml / Environment: 留空
 #
-# ⚠️ 这里刻意不给 setup-node 设 registry-url：一旦生成带认证行的 .npmrc，
+# ⚠️ npmjs 那一路刻意不给 setup-node 设 registry 输入：一旦生成带认证行的 .npmrc，
 # npm 会走 token 路径而不是 OIDC 握手，首发就会以 ENEEDAUTH 失败。
+# 只有 GitHub Packages 那一路才自己写 .npmrc（指向 npm.pkg.github.com），
+# 而且写在 npm ci 之后、只映射 @<owner> 这个 scope，免得把公共依赖也带偏。
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -21,6 +32,20 @@ on:
         description: 只跑门禁，不发布
         type: boolean
         default: false
+      tag:
+        description: 补挂 tarball 到这个 tag 的 Release 上（留空则不挂）
+        type: string
+        default: ''
+
+env:
+  # 必须与 GitHub 用户名一致；仅用于 GitHub Packages 那一路上传时的临时改名。
+  NPM_SCOPE: '@elegant01'
+  PKG: dsh-memory-watchdog
+
+# 同一个版本只能发一次：push 与 release 可能同时进来，串行化而不是取消。
+concurrency:
+  group: publish-package
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -39,6 +64,48 @@ jobs:
       - run: npm test
       - run: npm run preflight
 
+  publish-github-packages:
+    name: Publish to GitHub Packages
+    needs: verify
+    if: ${{ !inputs.dryRun }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # 先装公共依赖（此时还没有 .npmrc），再写 GitHub Packages 的认证，
+      # 这样 @deepseek-ai/schemastery 之类不会被拉到 npm.pkg.github.com 去找。
+      - run: npm ci
+      - name: Point npm at GitHub Packages
+        run: |
+          printf '@%s:registry=https://npm.pkg.github.com\n' "${NPM_SCOPE#@}" >> .npmrc
+          printf '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' >> .npmrc
+      - name: Skip when this version is already on GitHub Packages
+        id: needs-publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "$NPM_SCOPE/$PKG@$version" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Retag as scoped package for GitHub Packages
+        if: steps.needs-publish.outputs.skip == 'false'
+        # GitHub Packages 不接受无 scope 包名，只在 CI 里临时改名，
+        # 不动仓库源码里 npmjs 用的无 scope 包名 dsh-memory-watchdog
+        run: npm pkg set name="$NPM_SCOPE/$PKG"
+      - name: Publish
+        if: steps.needs-publish.outputs.skip == 'false'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish-npmjs:
     name: Publish to npmjs (OIDC)
     needs: verify
@@ -53,8 +120,47 @@ jobs:
         with:
           # 内置 npm >= 11，满足 trusted publishing / provenance 要求
           node-version: '24'
-      - run: npm ci
-      - run: npm test
-      - run: npm run preflight
+      # 门禁已在 verify 里跑过（needs: verify），这里不再重复；publish 本身不需要 node_modules。
+      - name: Skip when this version is already on npmjs
+        id: needs-publish
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "$PKG@$version" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish with provenance
+        if: steps.needs-publish.outputs.skip == 'false'
         run: npm publish --provenance --access public
+
+  upload-release-asset:
+    name: Attach tarball to Release
+    needs: verify
+    if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 补挂历史 Release 时必须检出那个 tag，否则打出来的是 main 的 HEAD 版本
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # 不需要 npm ci：npm pack 只按 package.json 的 files 清单打包已提交的文件。
+      - name: Check tag matches package version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          version=$(node -p "require('./package.json').version")
+          if [ "v$version" != "$tag" ]; then
+            echo "tag $tag does not match package version $version" >&2
+            exit 1
+          fi
+      - name: Pack tarball
+        run: npm pack
+      - name: Upload tarball to Release
+        run: gh release upload "${{ inputs.tag || github.ref_name }}" ./*.tgz --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

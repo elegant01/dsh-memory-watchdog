@@ -232,6 +232,8 @@ npm pack          # 生成不要求消费者构建的 tarball
 
 源码为 ESM JavaScript、PowerShell 和浏览器端 client bundle；不包含 TypeScript 编译步骤、原生 addon 或安装脚本。
 
+发布由 `.github/workflows/release.yml` 完成：推 `main` 或发布 Release 时同时发到 npmjs（OIDC，带 provenance）与 GitHub Packages，Release 上另挂 `npm pack` 的 tarball。发版动作与补挂历史 Release 的命令见 [DEV.md](./DEV.md) 的「发布」一节。
+
 ### 数据文件
 
 | 文件 | 用途 |
