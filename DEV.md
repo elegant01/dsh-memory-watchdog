@@ -48,7 +48,7 @@ node scripts/deploy.mjs --prune-legacy   # 顺带清掉旧名 dsh-memory-guard �
 | --- | --- | --- |
 | GitHub Packages | push / release | 临时改名成 `@elegant01/dsh-memory-watchdog` 后发布，仓库页面侧栏的 Packages 卡片来自这一路 |
 | npmjs | push / release | 走 Trusted Publisher（OIDC），`npm publish --provenance`，不需要 token |
-| Release 附件 | release 发布 | `npm pack` 出的 tarball 挂到该 Release 上 |
+| Release 附件 | release 发布 / 手动补挂 | `npm pack` 出的 tarball 挂到该 Release 上 |
 
 所以发版的完整动作就是：改 `package.json` 的 `version`（以及 CHANGELOG）→ 提交 → `git push`。两路发布都先查「这个版本是不是已经在那儿了」，在就跳过，重复 push 不会报 `E409`/`EPUBLISHCONFLICT`。
 
