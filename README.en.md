@@ -195,6 +195,7 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, and
 - One attribution round takes about **1.9 s** (every 30 s), pagefile info about **1.8 s** (every 5 minutes) and the crash timeline about **1.6 s** (every 10 minutes). All three are short-lived processes that exit when done.
 - The helper starts only for an actual handoff and does not stay resident.
 - The plugin-memory radar is plain JS counting and costs next to nothing; allocation sampling only records during the window and aggregates once at the end, so its cost scales with the allocation rate. Writing a `.heapsnapshot` pauses the Host for hundreds of milliseconds to seconds depending on heap size; the card warns first.
+- The 14-day trend rewrites `trend.json` every 10 minutes (hourly buckets and histograms only, never raw samples); the diagnostics bundle is built on demand; the snapshot diff streams both files in 1 MiB chunks and keeps only one node array at a time (1.5 GiB per file, 40 million nodes, 120 s timeout), with one comparison allowed at a time.
 
 ## Notification boundary
 
@@ -211,6 +212,9 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 - Client plugins live in the renderer process, which the Host-side inspector cannot reach, so they are outside the plugin-memory view; that column only covers the Host process total.
 - The black box keeps one point per 4 seconds and only the latest ~48 seconds, so it shows the trend right before a crash rather than being a full time series; when a process is killed, the final point may be up to 4 seconds old.
 - Handle and event-loop signals are only valid while this process is alive and start from zero after a restart; warnings and uncaught exceptions are counted but never intercepted, so they cannot be used to "prevent" a crash.
+- The OOM classes (heap / external / system) are heuristic conclusions drawn from the last black box point, not minidump-grade evidence: the black box keeps one point per 4 seconds and at most 12 points, so the tail covers roughly 48 seconds, and the ±2 minute alignment window is there to absorb log flush delay.
+- Trend p50/p95 come from a fixed 2%-wide histogram: good enough for a trend line, not exact values; read the live pressure snapshot for those. Only buckets are persisted, never raw samples, so history outside the retained buckets cannot be reconstructed.
+- The snapshot diff reads only the `snapshot` and `nodes` sections, never `edges` or retainers, so it answers which kinds of objects grew or shrank, not who retains them. `hidden` and `synthetic` type nodes and internal names starting with `(` are skipped, and nodes sharing a constructor name are merged.
 - Different Windows / DSH launch paths may change the job flags. When the helper self-check finds it runs inside a job, it measures whether a new process can escape that job by starting two no-op children that exit immediately: if the escape works, automatic restart stays available (the card shows which escape was used); if it does not, the check fails closed. No process is ever terminated by this probe. Switching to a taskbar / Explorer launch only helps when that job came from the terminal or agent that started DSH - on the reference machine DSH creates a job for its own process tree, so the launch path changes nothing.
 - Real-world restarts, different launch paths and long-term stability still need to be verified against the release checklist.
 
