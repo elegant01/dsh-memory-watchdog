@@ -2,7 +2,7 @@
 
 ## From DSH Market
 
-Search for `dsh-memory-watchdog` (display name **DSH Memory Guard**) in the DSH Desktop plugin market and restart DSH once after installing. **Automatic restart** and **resume after crash** both stay off after installation; only monitoring, attribution, pagefile advice and the crash timeline run.
+Search for `dsh-memory-watchdog` (display name **DSH Memory Guard**) in the DSH Desktop plugin market and restart DSH once after installing. **Automatic restart** and **resume after crash** both stay off after installation; monitoring, attribution, pagefile advice and the crash timeline run, as do the plugin memory radar (with periodic sampling), the black box, runtime signals, the 14-day trend and the heap notices.
 
 ## From npm
 
@@ -13,7 +13,7 @@ dsh plugin add dsh-memory-watchdog
 A DSH profile pins plugins to an exact version, so a new release is not picked up automatically. To upgrade, name the version explicitly:
 
 ```sh
-dsh plugin add dsh-memory-watchdog@0.2.1
+dsh plugin add dsh-memory-watchdog@0.8.0
 ```
 
 ## From a local checkout (development)

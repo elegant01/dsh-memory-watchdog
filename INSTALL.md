@@ -2,7 +2,7 @@
 
 ## 从 DSH Market 安装
 
-在 DSH Desktop 的插件市场里搜 `dsh-memory-watchdog`（显示名 DSH Memory Guard），安装后重启一次 DSH 即可。装完 **自动重启** 和 **崩溃后自动续接** 都是关闭状态，只有监控、归因、分页文件建议、崩溃时间线与插件内存雷达会运行（周期采样默认也关）。
+在 DSH Desktop 的插件市场里搜 `dsh-memory-watchdog`（显示名 DSH Memory Guard），安装后重启一次 DSH 即可。装完 **自动重启** 和 **崩溃后自动续接** 都是关闭状态；监控、归因、分页文件建议、崩溃时间线、插件内存雷达（含周期采样）、黑匣子、运行时信号、长期趋势与堆预警都在运行。
 
 ## 从 npm 安装
 
@@ -10,7 +10,7 @@
 dsh plugin add dsh-memory-watchdog
 ```
 
-DSH 的 profile 会把插件钉在当时的精确版本上，发新版不会自动升级；要升级就再执行一次上面那条命令并指定版本，例如 `dsh plugin add dsh-memory-watchdog@0.2.1`。
+DSH 的 profile 会把插件钉在当时的精确版本上，发新版不会自动升级；要升级就再执行一次上面那条命令并指定版本，例如 `dsh plugin add dsh-memory-watchdog@0.8.0`。
 
 ## 从本地源码安装（开发用）
 
