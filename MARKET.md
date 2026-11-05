@@ -2,7 +2,7 @@
 
 ## 一句话
 
-Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归因、分页文件只读建议与 7 天崩溃时间线；**自动重启默认关闭**、**崩溃后自动续接默认关闭**；还能把 Host 进程内的堆分配**按插件**归因，给出每个插件的内存排名与泄漏风险分级。
+Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归因、分页文件只读建议与 7 天崩溃时间线；**自动重启默认关闭**、**崩溃后自动续接默认关闭**；还能把 Host 进程内的堆分配**按插件**归因，给出每个插件的内存排名与泄漏风险分级，并支持 14 天长期趋势、一键诊断包与两次堆快照的差异对比。
 
 ## 基本信息
 
@@ -12,7 +12,7 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 | 显示名 | DSH Memory Guard / DSH 内存守护 |
 | 支持平台 | Windows x64 |
 | DSH 版本 | `>=0.2.0-rc.1 <0.3` |
-| 默认状态 | 监控 / 归因 / 时间线 / 插件内存雷达 / 周期采样 / 黑匣子 / 运行时信号开启；自动重启、崩溃续接**关闭** |
+| 默认状态 | 监控 / 归因 / 时间线 / 插件内存雷达 / 周期采样 / 黑匣子 / 运行时信号 / 长期趋势 / 堆与外部内存预警开启；自动重启、崩溃续接**关闭** |
 | 网络 | 无网络请求、无遥测 |
 | 安装依赖 | 无服务、无计划任务、无原生 addon、无安装脚本 |
 
@@ -31,9 +31,17 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 冷却可配（默认 30 分钟），持久化；每个 critical episode 最多尝试一次；失败不自动重试。
 - **崩溃后自动续接（默认关闭）**：只续 `interrupted` 的 turn，`aborted`（你手动停止）永不续；12 小时窗口、20 秒静置、每会话每小时最多 2 次；requestId 可推导所以重复扫描不会二次注入；子代理被打断时只唤醒父会话一次。
 - **插件内存（按插件归因）**：启动时扫当前 profile 的 `node_modules` 列出所有 `package.json` 带 `dsh` 字段的插件（带版本），所以装了什么一目了然；零开销雷达统计每个插件注册的定时器与监听器，周期采样（默认开，每 15 分钟抓 20 秒窗口，启动约 45 秒后先跑一次基线）按 `node_modules/<包名>` 排名分配字节、占比与每小时增长，超过阈值判 high/medium 并给出「只重载该插件」的建议；high/medium 可下钻到前三个热点分配点（`文件:行 · 函数 · 字节`），每次采样前先强制 GC，所以增长只算真正存活的对象；面板可手动采样、导出 `.heapprofile`、写堆快照。
+- **采样自监控**：每个堆采样窗口记录真实耗时、`process.cpuUsage()` 差值与提交内存前后变化；CPU >60% 或 commit 增长 ≥256 MiB 会标 `intrusive` 并提示「这次采样可能影响了结果」，正常时也显示一行采样开销。
+- **插件首次注册时刻**：雷达第一次看到某个包注册定时器或监听器时记时间戳，配合宿主启动时刻算出「启动后多久首次注册」显示在插件行下面（这是首次可见注册时刻，不是精确加载耗时）。
 - **热重载 A/B**：插件在插件管理器里停用再启用（或开发时热重载）时，记录卸载前后的字节并算出「保留字节差」；重载后回到原值说明干净，越重载越大说明该插件有泄漏。
 - **黑匣子**：每 4 秒把一行压力样本写进 `blackbox.json`（只留最近约 48 秒），崩溃/重启后立即展示「上次运行最后 60 秒」的曲线，不用等事故重演。
+- **崩溃前黑匣子归并**：崩溃条目若落在上次运行黑匣子尾部 ±2 分钟内，条目直接挂上最多 12 个点（提交占用、堆、外部内存），在条目下展开即看崩溃前那几十秒，不用再去翻文件。
+- **崩溃 OOM 三分类**：按尾部末点自动标注 `oom-heap`（堆使用率 ≥95%）、`oom-external`（`external + arrayBuffers` ≥1 GiB 且占 RSS ≥50%）、`oom-system`（提交占用 ≥90%）；三者都不满足就不标注，不会把普通崩溃说成 OOM。
+- **堆接近上限与外部内存增长预警**：每次采样顺带记录 `heapTotal` / `external` / `arrayBuffers`；堆使用率连续 3 个样本 ≥90% 提示一次（<85% 才复位），`external + arrayBuffers` 速率 ≥200 MB/h 且跨度 ≥30 分钟提示一次（<100 MB/h 复位）。两者都只提示，不降级、不触发重启。
 - **运行时信号**：进程警告按名字计数（`MaxListenersExceededWarning` 这类会越滚越多）、活动句柄总数与一分钟变化、事件循环延迟 p99/均值/峰值；只读计数，不拦截、不改变进程行为。
+- **长期趋势（14 天）**：每次采样按本地时间丢进小时桶（计数、总和、最高值、一份 2% 宽的定长直方图、动作与预警计数），存在 `trend.json`，每 10 分钟滚动写一次；面板显示最近 7 天每天的最高占用与动作次数。直方图让 p50/p95 能算出来，而磁盘上不留任何原始样本——这是它敢保留 14 天的原因。
+- **诊断包（一键下载）**：单个 JSON 附件，含状态摘要、最近 50 条事件、`trend.json`、`plugin-memory.json`、`blackbox.json`、`capability.json`；打包前整个 payload 过脱敏层（`C:\Users\<name>` / `/Users/<name>` / `/home/<name>` → `~`，session id 只留前 8 位）。**不含**堆采样、堆快照与日志正文——堆文件里是原始堆内容，脱敏救不了它，包里 `bundle.excluded` 字段把这条明写出来。
+- **堆快照对比**：插件区多一个「对比最近两次快照」按钮，读取最近两份 `.heapsnapshot` 的 `snapshot` 段与 `nodes`，按构造器名汇总 `self_size`，列出变化最大的 10 个，形如 `Map · 4.0 MiB → 6.0 MiB（+2.0 MiB）· 12 → 18 个`，并给出总字节差与节点差；同一时间只允许一份对比，不足两份会明确提示。按 1 MiB 分块流式读取，文件上限 1.5 GiB、节点上限 4000 万、超时 120 秒。
 - 采集输出有界解析；畸形数据、进程退出与 stderr 可见；异常重启使用有上限退避。
 - 重启使用两阶段交接；未收到 `go`、Host 提前退出或用户取消时，helper 不结束任何进程。
 - 旧实例未退出或端口未释放时**不拉起**新实例；新实例未在限定时间内监听原端口时本次重启记为失败，不会误报成功。
@@ -51,12 +59,12 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 ## 权限行为
 
 - 以隐藏窗口运行固定系统路径的 Windows PowerShell 采集只读信息；仅在单次进程内使用 `-ExecutionPolicy Bypass`，**不永久修改**执行策略。
-- 四个 PowerShell 资源全部只读（性能计数 / 进程 commit 归因 / 分页文件与提交上限 / 崩溃日志 + `Get-WinEvent`），不使用 WMI、CIM 或 `wmic`。
+- 日常采集用四个 PowerShell 资源，全部只读：性能计数、进程 commit 归因、分页文件与提交上限、崩溃日志（`Get-WinEvent`）。全部脚本都不用 WMI、CIM 或 `wmic`。
 - 读取目标进程可执行文件路径、创建时间、命令行并校验 Host/Electron 主进程父子关系。
 - 仅在交接时处理已校验身份的 Electron 主进程、Host 及事先记录的相同 executable 子进程；不使用宽泛 `taskkill /IM`，不按内存占用结束无关软件。
 - 崩溃续接只调用 DSH `sessionController` 的 `list` / `inspect` / `prompt`（`mode: 'queue'`），不使用任何进程创建 API。
 - 插件内存采样只在本进程内通过 `node:inspector` 的 `HeapProfiler` 读分配栈，不 attach 外部进程、不开调试端口；导出的 profile 与快照只写 `$DSH_HOME/memory-watchdog/`。
-- 通过 DSH 带认证的 `connection.fetch` 暴露状态 / 事件 / 取消 / 立即扫描接口；响应禁止缓存；客户端不能传入 PID、路径、命令行、脚本路径或 helper 参数，也不能改配置。
+- 通过 DSH 带认证的 `connection.fetch` 暴露状态 / 事件 / 取消 / 续接 / 插件内存 / 采样 / 导出 / 堆快照 / 快照对比 / 诊断包共 10 个接口；响应禁止缓存；客户端不能传入 PID、路径、命令行、脚本路径或 helper 参数，也不能改配置。
 - 数据仅写入 `$DSH_HOME/memory-watchdog/`（默认 `~/.dsh/memory-watchdog/`），不发起网络请求。
 
 ## 资源开销
@@ -66,6 +74,8 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - helper 只在真正交接时启动，不常驻。
 - 插件内存雷达是纯 JS 计数，开销接近零；堆采样只在窗口内记录、窗口结束聚合一次；写堆快照会让 Host 停顿数百毫秒到数秒，按钮会先提示。
 - 黑匣子每 4 秒原子写一个几百字节的小文件；运行时信号每 5 秒读一次直方图与句柄列表，开销可忽略。
+- 长期趋势每 10 分钟滚动写一次 `trend.json`（只存小时桶与直方图，不存原始样本）；诊断包按需生成，平时不占资源。
+- 堆快照对比是流式解析，峰值只保留一份节点数组；同一时间只允许一份对比，文件上限 1.5 GiB、节点上限 4000 万、超时 120 秒。
 
 ## 已知边界
 
@@ -77,6 +87,10 @@ Windows 提交内存看门狗：持续监控、给出**谁在吃内存**的归�
 - 插件内存采样只看窗口内分配、且结束时仍存活的对象，不代表插件总驻留；native 字节没有归属。清单只扫当前 profile 的 `node_modules`，别的 profile 或全局目录里的插件不在表里。
 - 渲染进程里的 client 插件在另一个进程，host 侧够不着，不在插件内存视图范围。
 - 黑匣子粒度 4 秒、只留约 48 秒；运行时信号的句柄与事件循环数据只在本进程存活期间有效，重启后从零开始。
+- OOM 三分类是启发式判断，不是 minidump 级证据；黑匣子 4 秒粒度、12 个点，尾部最多覆盖约 48 秒，2 分钟的对齐窗口是留给日志落盘延迟的。
+- 长期趋势的 p50/p95 来自 2% 宽的直方图，够画趋势线但不是精确值；精确值仍在实时压力快照里。
+- 堆快照对比只读 `snapshot` 段与 `nodes`，**不含 edges 与 retainer**，所以它回答的是「哪类对象变多/变少」，不是「谁在引用它」。hidden 与 synthetic 节点、`(` 开头的内部名不计入。
+- 「插件首次注册时刻」是首次可见注册时刻，不是精确加载耗时。
 - 真实重启、不同启动方式与长期稳定性需按发布检查清单单独验证。
 
 ## 卸载
@@ -91,4 +105,4 @@ MIT。
 
 ## English listing summary
 
-Windows commit-memory watchdog for DSH Desktop. Monitoring, commit attribution, pagefile advice, the crash timeline and in-page warnings are always on; **automatic restart and resume-after-crash are both off by default**. Thresholds (warning/critical percentages, available commit, confirmation samples, cooldown, restart gate) are configurable and apply immediately. Attribution shows how much of the commit charge the DSH process tree holds plus the top consumers, and the restart gate (20% by default) blocks a restart when DSH is not the main committer or attribution data is missing — fail closed. Read-only pagefile advice never changes system settings. The 7-day timeline merges DSH `crash-*.log` entries with Windows virtual-memory events. When restart is enabled by the user, it restarts the entire DSH Desktop only after critical commit pressure is confirmed by consecutive samples, the gate passes and the desktop is confirmed idle; restarting can discard unsent drafts and bypasses the Electron shell's native quit confirmation, while profile/session data is still flushed by the Host's graceful shutdown. When resume is enabled, only turns marked interrupted (never ones you canceled) get one injected "verify the state, then continue" message, rate-limited and idempotent, and a resumed turn keeps that session's tools and permissions. No network access or telemetry. A per-plugin memory view lists every plugin installed in the current profile (`package.json` with a `dsh` field) and ranks V8 heap allocations inside the Host by `node_modules/<package>`, with a zero-cost radar counting each plugin's timers and listeners, periodic sampling on by default, per-hour growth verdicts (high/medium), reload A/B evidence (what a plugin keeps across a disable/enable round trip), on-demand export of a `.heapprofile` and a heap snapshot. A 4-second black box keeps the last ~48 seconds of pressure so the next start can show the trajectory right before a crash, and runtime signals track warning storms, active handle counts and event-loop delay p99 without ever intercepting them. Windows x64, DSH `>=0.2.0-rc.1 <0.3`. MIT.
+Windows commit-memory watchdog for DSH Desktop. Monitoring, commit attribution, pagefile advice, the crash timeline and in-page warnings are always on; **automatic restart and resume-after-crash are both off by default**. Thresholds (warning/critical percentages, available commit, confirmation samples, cooldown, restart gate) are configurable and apply immediately. Attribution shows how much of the commit charge the DSH process tree holds plus the top consumers, and the restart gate (20% by default) blocks a restart when DSH is not the main committer or attribution data is missing — fail closed. Read-only pagefile advice never changes system settings. The 7-day timeline merges DSH `crash-*.log` entries with Windows virtual-memory events. When restart is enabled by the user, it restarts the entire DSH Desktop only after critical commit pressure is confirmed by consecutive samples, the gate passes and the desktop is confirmed idle; restarting can discard unsent drafts and bypasses the Electron shell's native quit confirmation, while profile/session data is still flushed by the Host's graceful shutdown. When resume is enabled, only turns marked interrupted (never ones you canceled) get one injected "verify the state, then continue" message, rate-limited and idempotent, and a resumed turn keeps that session's tools and permissions. No network access or telemetry. A per-plugin memory view lists every plugin installed in the current profile (`package.json` with a `dsh` field) and ranks V8 heap allocations inside the Host by `node_modules/<package>`, with a zero-cost radar counting each plugin's timers and listeners, periodic sampling on by default, per-hour growth verdicts (high/medium), reload A/B evidence (what a plugin keeps across a disable/enable round trip), on-demand export of a `.heapprofile` and a heap snapshot. A 4-second black box keeps the last ~48 seconds of pressure so the next start can show the trajectory right before a crash, and runtime signals track warning storms, active handle counts and event-loop delay p99 without ever intercepting them. Crashes that land within two minutes of the black box tail get the last twelve points attached inline and a heuristic OOM class (heap / external / system) rather than a generic "DSH crashed"; heap usage at or above 90% for three samples and external-plus-arrayBuffers growth at or above 200 MB/h each raise a one-shot notice without ever degrading or restarting anything. A 14-day trend keeps per-hour buckets (counts, peak, a 2%-wide histogram for p50/p95) in `trend.json` and never writes raw samples to disk, and a one-click diagnostics bundle exports status, the last 50 events, the trend, the plugin ledger, the black box and the capability probe as a single JSON attachment — home directories reduced to `~`, session ids truncated, and heap files deliberately excluded. `POST /api/memory-watchdog.snapshot-diff` compares the two most recent heap snapshots by constructor name and lists the ten biggest movers with byte and node deltas; it reads only the `snapshot` and `nodes` sections, so it answers which kinds of objects grew, not who retains them. Windows x64, DSH `>=0.2.0-rc.1 <0.3`. MIT.
