@@ -61,7 +61,9 @@ gh workflow run release.yml -f dryRun=true  # 只跑门禁，不发布
 
 `workflow_dispatch` 补挂要求 tag 与 `package.json` 的版本号严格对应（`v0.8.0` ↔ `0.8.0`），否则 job 直接失败，免得把 main 的 HEAD 打成旧 tag 的附件。
 
-> 现状提醒：v0.2.0–v0.6.0 的 Release 至今**没有附件**（只有 v0.8.0 挂上了 tarball），需要时用上面第一条命令逐个补挂。另外 **0.7.0 从未单独发版**——没有 `v0.7.0` tag，npm 与 Release 都跳到 0.8.0，其改动包含在 0.8.0 里（见 `CHANGELOG.md` 的 0.7.0 节）。
+> 现状（2026-11-05）：v0.2.0–v0.6.0 缺失的 Release 附件**已全部补齐**，现在每个 Release 都挂着对应版本的 tarball。补挂时有个坑：`release.yml` 有 `concurrency: group: publish-package`，同组最多 1 running + 1 pending，**一次性并发提交多个补挂会被取消**，必须等上一个 run 结束后再发下一个。
+>
+> 另外 **0.7.0 从未单独发版**——没有 `v0.7.0` tag，npm 与 Release 都跳到 0.8.0，其改动包含在 0.8.0 里（见 `CHANGELOG.md` 的 0.7.0 节）。
 
 ## 门禁
 
