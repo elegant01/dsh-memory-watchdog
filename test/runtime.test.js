@@ -153,6 +153,8 @@ async function harness(options = {}) {
     resume: options.resume,
   }
   if (options.heapWatch !== undefined) deps.heapWatch = options.heapWatch
+  if (options.crashpadProbe !== undefined) deps.crashpadProbe = options.crashpadProbe
+  if (options.rendererHeap !== undefined) deps.rendererHeap = options.rendererHeap
   const rt = new GuardRuntime({
     ctx: { get: () => undefined },
     rawConfig,
@@ -616,6 +618,95 @@ test('status exposes attribution, pagefile advice and the crash timeline', async
   assert.deepEqual(status.system.advice.map((entry) => entry.code), ['pagefile.ok'])
   assert.equal(status.crashes.ok, true)
   assert.deepEqual(status.crashes.items, [])
+  await h.cleanup()
+})
+
+test('status carries the health score and the merged advice list', async () => {
+  const h = await harness()
+  await h.tickAfter(1000)
+  const status = h.rt.status()
+  assert.equal(typeof status.health.score, 'number')
+  assert.ok(status.health.score >= 0 && status.health.score <= 100)
+  assert.equal(typeof status.health.grade, 'string')
+  assert.equal(status.health.weights.pressure, 30)
+  assert.equal(status.health.components.length, 6)
+  assert.deepEqual(
+    status.health.components.map((entry) => entry.key),
+    ['pressure', 'growth', 'crashes', 'plugins', 'loop', 'renderer'],
+  )
+  assert.equal(status.advice.total, status.advice.items.length, 'a quiet system does not truncate')
+  assert.ok(status.advice.items.some((entry) => entry.key === 'pagefile-ok'), 'the healthy pagefile verdict is not dropped')
+  await h.cleanup()
+})
+
+test('the health score and the advice list read the same snapshot', async () => {
+  const h = await harness()
+  await driveToCritical(h.feed)
+  const status = h.rt.status()
+  const chunk = (key) => status.health.components.find((entry) => entry.key === key)
+  const pressure = chunk('pressure')
+  assert.equal(pressure.available, true)
+  assert.ok(pressure.penalty > 0, 'a critical snapshot must cost pressure points')
+  const advice = status.advice.items.find((entry) => entry.key === 'pressure-critical')
+  assert.notEqual(advice, undefined)
+  assert.equal(advice.value.pct, status.pressure.pct, 'the advice quotes the number the card shows')
+  await h.cleanup()
+})
+
+test('a renderer heap report reaches the status and the score', async () => {
+  const h = await harness()
+  const first = h.rt.reportRenderer({ available: true, usedBytes: 3 * GIB, limitBytes: 4 * GIB })
+  assert.equal(first.ok, true)
+  assert.equal(first.accepted, true)
+  const status = h.rt.status()
+  assert.equal(status.renderer.available, true)
+  assert.equal(status.renderer.usedBytes, 3 * GIB)
+  const rendererChunk = status.health.components.find((entry) => entry.key === 'renderer')
+  assert.equal(rendererChunk.available, true)
+  assert.ok(status.advice.items.some((entry) => entry.key === 'renderer-heap'))
+
+  const throttled = h.rt.reportRenderer({ available: true, usedBytes: 1 * GIB })
+  assert.equal(throttled.accepted, false)
+  assert.equal(throttled.reason, 'throttled')
+  await h.cleanup()
+})
+
+test('minidump scans are cached, guarded against re-entry and fail closed', async () => {
+  let release = null
+  let hang = false
+  const h = await harness({
+    crashpadProbe: async () => {
+      if (hang) await new Promise((resolve) => { release = resolve })
+      return { available: false, reason: 'not-found', dumps: [] }
+    },
+  })
+  assert.deepEqual(h.rt.status().minidumps, { available: false, reason: 'not-scanned', dumps: [] })
+
+  const first = await h.rt.inspectMinidumps()
+  assert.equal(first.ok, true)
+  assert.equal(h.rt.status().minidumps.reason, 'not-found')
+
+  hang = true
+  const running = h.rt.inspectMinidumps()
+  await settle()
+  const busy = await h.rt.inspectMinidumps()
+  assert.equal(busy.ok, false)
+  assert.equal(busy.code, 'minidump-busy')
+  release()
+  assert.equal((await running).ok, true)
+  await h.cleanup()
+})
+
+test('a failing minidump probe records the error instead of throwing', async () => {
+  const h = await harness({
+    crashpadProbe: async () => {
+      throw new Error('probe exploded')
+    },
+  })
+  const result = await h.rt.inspectMinidumps()
+  assert.equal(result.ok, false)
+  assert.match(result.error, /probe exploded/)
+  assert.equal(h.rt.status().lastError.source, 'crashpad')
   await h.cleanup()
 })
 

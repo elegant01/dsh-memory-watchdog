@@ -81,7 +81,7 @@ token 可以从 `git credential fill` 取（`protocol=https` + `host=github.com`
 ## 门禁
 
 ```sh
-npm test          # node:test，300 项
+npm test          # node:test，305 项
 npm run preflight # 包内容 + 安全规则（672 checks：禁 WMI/CIM、禁宽泛 taskkill、PowerShell 必须 ASCII、开关必须默认关闭等）
 npm pack          # 产出不需要消费者构建的 tarball
 ```
