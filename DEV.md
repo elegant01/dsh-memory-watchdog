@@ -55,15 +55,28 @@ node scripts/deploy.mjs --prune-legacy   # 顺带清掉旧名 dsh-memory-guard �
 补挂历史 Release 的 tarball（例如某个 tag 当时没挂上）：
 
 ```sh
-gh workflow run release.yml -f tag=v0.8.0   # 检出该 tag、校验版本号一致、npm pack、gh release upload --clobber
+gh workflow run release.yml -f tag=v0.9.0   # 检出该 tag、校验版本号一致、npm pack、gh release upload --clobber
 gh workflow run release.yml -f dryRun=true  # 只跑门禁，不发布
 ```
 
-`workflow_dispatch` 补挂要求 tag 与 `package.json` 的版本号严格对应（`v0.8.0` ↔ `0.8.0`），否则 job 直接失败，免得把 main 的 HEAD 打成旧 tag 的附件。
+`workflow_dispatch` 补挂要求 tag 与 `package.json` 的版本号严格对应（`v0.9.0` ↔ `0.9.0`），否则 job 直接失败，免得把 main 的 HEAD 打成旧 tag 的附件。
 
-> 现状（2026-11-05）：v0.2.0–v0.6.0 缺失的 Release 附件**已全部补齐**，现在每个 Release 都挂着对应版本的 tarball。补挂时有个坑：`release.yml` 有 `concurrency: group: publish-package`，同组最多 1 running + 1 pending，**一次性并发提交多个补挂会被取消**，必须等上一个 run 结束后再发下一个。
+**本机没有 `gh` CLI**（`where.exe gh` 无结果、winget/choco/scoop 都没装）。要么先装，要么直接用 REST API 发同一个 dispatch，两者等价：
+
+```sh
+curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/elegant01/dsh-memory-watchdog/actions/workflows/release.yml/dispatches \
+  -d '{"ref":"main","inputs":{"tag":"v0.9.0","dryRun":"false"}}'
+```
+
+token 可以从 `git credential fill` 取（`protocol=https` + `host=github.com`），实测该 token 有 `repo`/`workflow` scope，够用。
+
+> 现状（2026-11-09）：v0.2.0–v0.6.0 缺失的 Release 附件**已全部补齐**，现在每个 Release 都挂着对应版本的 tarball。补挂时有个坑：`release.yml` 有 `concurrency: group: publish-package`，同组最多 1 running + 1 pending，**一次性并发提交多个补挂会被取消**，必须等上一个 run 结束后再发下一个。
 >
 > 另外 **0.7.0 从未单独发版**——没有 `v0.7.0` tag，npm 与 Release 都跳到 0.8.0，其改动包含在 0.8.0 里（见 `CHANGELOG.md` 的 0.7.0 节）。
+>
+> 发版顺序（0.9.0 实测走通）：`git tag -a vX.Y.Z` → push tag → `POST /repos/elegant01/dsh-memory-watchdog/releases`（`tag_name` 必须是已推送的 tag；**PowerShell 建 body 时要用 `UTF8.GetBytes()`，否则中文乱码**）→ Release 事件触发 `Publish Package`，三路一起跑完。npm 有几分钟的 processing 延迟，job 成功后立刻查 registry 可能还是旧数据，别误判。
 
 ## 门禁
 
