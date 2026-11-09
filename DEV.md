@@ -68,8 +68,8 @@ gh workflow run release.yml -f dryRun=true  # 只跑门禁，不发布
 ## 门禁
 
 ```sh
-npm test          # node:test，242 项
-npm run preflight # 包内容 + 安全规则（禁 WMI/CIM、禁宽泛 taskkill、PowerShell 必须 ASCII、开关必须默认关闭等）
+npm test          # node:test，300 项
+npm run preflight # 包内容 + 安全规则（672 checks：禁 WMI/CIM、禁宽泛 taskkill、PowerShell 必须 ASCII、开关必须默认关闭等）
 npm pack          # 产出不需要消费者构建的 tarball
 ```
 
@@ -92,6 +92,16 @@ npm pack          # 产出不需要消费者构建的 tarball
 - `lib/signals.js`：`createSignals({ now, intervalMs, points })` → `{ install, uninstall, snapshot, sample, installed }`（注意 `installed` 是函数）。监听 `process.on('warning')` 与 `process.on('uncaughtExceptionMonitor')`，**刻意不监听 `unhandledRejection`**（加监听器会改变 Node 的致命默认行为）；句柄用 `process.getActiveResourcesInfo()` 每 5 秒记一次（`timer.unref()`），事件循环用 `monitorEventLoopDelay({ resolution: 20 })` 每 5 秒读一次直方图再 `reset()`。
 - 热重载 A/B 在 `lib/plugin-memory.js` 的 `watchReloads()`：雷达句柄数 >0→0 记 open（`beforeBytes` 取账本 lastBytes），回到 >0 时写入 `{ at, resolvedAt, key, name, beforeBytes, afterBytes, retainedBytes, gapMs }`，上限 `PLUGIN_RELOAD_ITEMS`（10）；由 `sampleNow()` 与 `GuardRuntime.tick()`（每 5 秒）调用，`status()` 输出 `reloads` / `openReloads`。
 - 对应测试：`test/blackbox.test.js`、`test/signals.test.js`，以及 `test/plugin-memory.test.js` 里的 `watchReloads` 用例。
+
+## 健康评分、建议清单、渲染进程堆与崩溃转储
+
+- `lib/health.js`：纯函数，无 IO。`HEALTH_WEIGHTS = { pressure: 30, growth: 20, crashes: 15, plugins: 15, loop: 10, renderer: 10 }`（合计 100）；`computeHealth({ status, renderer, thresholds })` → `{ score, grade, penalties, components, weights }`。六个组件各返回 `{ available, value, penalty, detail, weight }`，`gradeOf(score)` 给出 good ≥90 / fair ≥75 / poor ≥50 / bad。**硬规则：`available: false` 的组件 penalty 必须为 0**——缺数据当成满分或零分都是在撒谎，preflight 的 `health:missing-is-not-a-penalty` 会盯着这条。增长项要 ≥2 个 `n > 0` 的小时桶且跨度 ≥30 分钟才给斜率，否则不给结论。
+- `lib/advice.js`：纯函数。`buildAdvice({ status, renderer })` 合并十一路来源（分页文件、压力、重启门限、插件高占用、堆接近上限、外部内存增长、崩溃次数、事件循环延迟、进程警告、进程驻留增长、渲染进程堆）→ 按 `key` 去重 → 按 severity（critical/warn/info/ok）排序 → 截断到 `ADVICE_MAX_ITEMS`（8），返回 `{ items, total, truncated, actionCount }`。每条形如 `{ key, code, severity, kind, source, why, how, value, text }`；`kind` 只取 `advice`（只读建议）或 `action`（可执行动作）。`text` 是 `adviceTexts.<text>` 的翻译 key，默认等于 `key`，但插件条目 key 是动态的（`plugin-<name>`）而句子是共享的，所以必须能独立命名。**分页文件建议现在只由这里渲染**——client 里 `systemTitle` 区那段旧渲染已删除，否则同一句会出现两次。
+- `lib/renderer-heap.js`：`createRendererHeap({ now })` → `{ report, status, reset }`。Host 读不到 renderer 的堆，所以由 client 读 `performance.memory` 后经 `POST /api/memory-watchdog.renderer` 上报。`report()` 节流 `RENDERER_REPORT_MIN_INTERVAL_MS`（30 秒）、拒收 >`RENDERER_SANITY_MAX_BYTES`（64 GiB）与非法值、把数组也算 `invalid-body`；`{ available: false }` 记为「不支持」（`reason: 'unsupported'`），并在 `status()` 里让 `available` 永久为 false、`stale` 永久为 false——浏览器没有这个 API 是持久状态，不该随时间变成「过期」。超过 `RENDERER_STALE_MS`（120 秒）无新读数则 `available: false` 但**保留最后数值**，绝不跳成 0。
+- `lib/crashpad.js`：`resolveCrashpadDir(env)` 试四个候选（`%LOCALAPPDATA%`/`%APPDATA%` × `@deepseek-ai\dsh-desktop\Crashpad\reports`、`Crashpad`）；`parseMinidump(path)` 只读 32 字节头（`MDMP` 魔数 `0x504d444d`）、流目录、`ModuleListStream(4)`、`ExceptionStream(6)`、`MemoryInfoListStream(16)`，**不读完整内存流**。上限 `CRASHPAD_MAX_FILE_BYTES`（512 MiB，只看 stat 大小）、`CRASHPAD_MAX_MODULES`（500）、`CRASHPAD_MAX_MEMORY_ENTRIES`（200000）；模块名用单次 64 KiB 窗口读。`inspectCrashpad({ env, limit })` 一次最多 `CRASHPAD_STATUS_FILES`（5）份，串行、坏一份不影响其余。**绝不写、改、删任何文件**，preflight 的 `crashpad:read-only` 会扫 `writeFile|unlink|rm(`。
+- 接入点：`GuardRuntime.status()` 里 `health`/`advice` **必须从同一个 snapshot 派生**（先构造 snapshot 再算，否则分数与卡片上的数值互相矛盾），另有 `renderer` 与 `minidumps` 两个字段；`lib/routes.js` 因此从 10 条变成 12 条路由；`lib/bundle.js` 的 `statusSummary()` 白名单加了 `health`/`advice`/`renderer`（分数单存无用，必须带组件与扣分明细）。
+- `lib/attribution.js` 的 `sampleAttribution` 参数已扩到六项：`-HostPid <n> -MainPid <n> -TopN <n> -GroupTopN <n> -MemberLimit <n>`，`top.ps1` 按程序名返回 `groups`（每个程序带 count/bytes/members），client 用 `ShareRow` 渲染可展开的分组行。
+- 对应测试：`test/health.test.js`、`test/advice.test.js`、`test/renderer-heap.test.js`、`test/crashpad.test.js`（后者在测试里自建真实 minidump 二进制，不依赖本机有没有 dump）。
 
 ## 本机验证过的取数口径
 

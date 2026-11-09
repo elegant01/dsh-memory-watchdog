@@ -24,6 +24,20 @@ function raw(overrides = {}) {
       { pid: 9, parentPid: 1, name: 'small.exe', bytes: 1 * GIB, dsh: false },
       { pid: 2, parentPid: 1, name: 'big.exe', bytes: 8 * GIB, dsh: true },
     ],
+    groups: [
+      {
+        name: 'big.exe',
+        count: 2,
+        bytes: 9 * GIB,
+        dsh: true,
+        dshBytes: 8 * GIB,
+        members: [
+          { pid: 2, bytes: 8 * GIB, dsh: true },
+          { pid: 5, bytes: 1 * GIB, dsh: false },
+        ],
+      },
+      { name: 'small.exe', count: 1, bytes: 1 * GIB, dsh: false, dshBytes: 0, members: [{ pid: 9, bytes: 1 * GIB, dsh: false }] },
+    ],
     ...overrides,
   }
 }
@@ -38,6 +52,25 @@ test('attribution normalizes a probe result and computes the DSH share itself', 
   assert.equal(result.sharePct, 25)
   assert.deepEqual(result.top.map((entry) => entry.pid), [2, 9])
   assert.equal(result.top[0].dsh, true)
+})
+
+test('attribution merges per-process rows into per-program groups', () => {
+  const result = normalizeAttribution(raw(), { at: 5000 })
+  assert.deepEqual(result.groups.map((group) => group.name), ['big.exe', 'small.exe'])
+  assert.equal(result.groups[0].count, 2)
+  assert.equal(result.groups[0].bytes, 9 * GIB)
+  assert.equal(result.groups[0].dshBytes, 8 * GIB)
+  assert.deepEqual(result.groups[0].members.map((member) => member.pid), [2, 5])
+
+  const capped = normalizeAttribution(raw(), { at: 1, groupTopN: 1, memberLimit: 1 })
+  assert.equal(capped.groups.length, 1)
+  assert.equal(capped.groups[0].members.length, 1)
+  assert.equal(capped.groups[0].count, 2, 'count stays the real total when members are capped')
+
+  const junk = normalizeAttribution(raw({ groups: [null, 'oops', { name: 'x.exe', bytes: 0 }] }), { at: 1 })
+  assert.deepEqual(junk.groups, [])
+  assert.deepEqual(normalizeAttribution(raw({ groups: 'oops' }), { at: 1 }).groups, [])
+  assert.deepEqual(normalizeAttribution({ ok: false, error: 'boom' }, { at: 9 }).groups, [])
 })
 
 test('attribution caps the top list and tolerates malformed entries', () => {
@@ -93,7 +126,13 @@ test('sampleAttribution normalizes the PowerShell payload and failures', async (
     mainPid: 20,
     now: () => 777,
     run: async (options) => {
-      assert.deepEqual(options.args, ['-HostPid', '10', '-MainPid', '20', '-TopN', '10'])
+      assert.deepEqual(options.args, [
+        '-HostPid', '10',
+        '-MainPid', '20',
+        '-TopN', '10',
+        '-GroupTopN', '10',
+        '-MemberLimit', '8',
+      ])
       return { ok: true, value: raw() }
     },
   })

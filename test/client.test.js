@@ -413,6 +413,22 @@ function fullStatus() {
         { pid: 4242, parentPid: 1, name: 'DeepSeek Harness.exe', bytes: 12 * 1024 ** 3, dsh: true },
         { pid: 999, parentPid: 1, name: 'chrome.exe', bytes: 4 * 1024 ** 3, dsh: false },
       ],
+      // The card groups by program name, so the per-pid list alone would hide the
+      // fact that six DSH processes together hold more than any single one.
+      groups: [
+        {
+          name: 'DeepSeek Harness.exe',
+          count: 6,
+          bytes: 16 * 1024 ** 3,
+          dsh: true,
+          dshBytes: 16 * 1024 ** 3,
+          members: [
+            { pid: 4242, bytes: 12 * 1024 ** 3, dsh: true },
+            { pid: 4243, bytes: 4 * 1024 ** 3, dsh: true },
+          ],
+        },
+        { name: 'chrome.exe', count: 3, bytes: 4 * 1024 ** 3, dsh: false, dshBytes: 0, members: [{ pid: 999, bytes: 4 * 1024 ** 3, dsh: false }] },
+      ],
     },
     system: {
       ok: true,
@@ -445,6 +461,80 @@ function fullStatus() {
       ledger: [{ sessionId: 'session-abcdef123456', attempts: 1, lastTurn: 4, lastCause: 'child', at: 7 }],
       maxAttempts: 2,
       windowMs: 12 * 60 * 60 * 1000,
+    },
+    health: {
+      score: 78,
+      grade: 'fair',
+      penalties: [
+        { key: 'pressure', penalty: 7.2, weight: 30, value: 82.4, detail: null },
+        { key: 'crashes', penalty: 5, weight: 15, value: 2, detail: null },
+      ],
+      components: [
+        { key: 'pressure', weight: 30, penalty: 7.2, available: true, value: 82.4, detail: null },
+        { key: 'growth', weight: 20, penalty: 0, available: false, value: null, detail: 'not-enough-data' },
+        { key: 'crashes', weight: 15, penalty: 5, available: true, value: 2, detail: null },
+        { key: 'plugins', weight: 15, penalty: 0, available: false, value: null, detail: 'disabled' },
+        { key: 'loop', weight: 10, penalty: 0, available: true, value: 12, detail: null },
+        { key: 'renderer', weight: 10, penalty: 0, available: true, value: 512 * 1024 * 1024, detail: null },
+      ],
+      weights: { pressure: 30, growth: 20, crashes: 15, plugins: 15, loop: 10, renderer: 10 },
+    },
+    advice: {
+      items: [
+        {
+          key: 'pressure-warning',
+          code: null,
+          severity: 'warn',
+          kind: 'advice',
+          source: 'pressure',
+          why: 'pressure',
+          how: 'restart-disabled',
+          text: 'pressure-warning',
+          value: { pct: 82.4, criticalPct: 90 },
+        },
+        {
+          key: 'pagefile-ok',
+          code: 'pagefile.ok',
+          severity: 'ok',
+          kind: 'advice',
+          source: 'pagefile',
+          why: 'pagefile.ok',
+          how: 'pagefile',
+          text: 'pagefile-ok',
+          value: { suggestionMb: null, pagefileMb: 10000, headroomMb: 16384 },
+        },
+      ],
+      total: 2,
+      truncated: false,
+      actionCount: 0,
+    },
+    renderer: {
+      available: true,
+      usedBytes: 512 * 1024 * 1024,
+      totalBytes: 1024 * 1024 * 1024,
+      limitBytes: 2 * 1024 * 1024 * 1024,
+      reportedAt: 10,
+      ageMs: 1500,
+      stale: false,
+      reason: null,
+    },
+    minidumps: {
+      available: true,
+      reason: null,
+      dir: 'C:\\Users\\someone\\AppData\\Local\\@deepseek-ai\\dsh-desktop\\Crashpad\\reports',
+      checked: 1,
+      total: 1,
+      dumps: [
+        {
+          path: 'C:\\dumps\\a.dmp',
+          bytes: 4 * 1024 * 1024,
+          modifiedAt: 11,
+          ageMs: 2000,
+          exception: { threadId: 1, code: '0xc0000017', address: '0x0', label: 'STATUS_NO_MEMORY' },
+          modules: { total: 42, top: [{ name: 'node.exe', size: 64 * 1024 * 1024 }], truncated: false },
+          memory: { total: 3, entries: 3, committedBytes: 1024 ** 3, reservedBytes: 2 * 1024 ** 3, truncated: false },
+        },
+      ],
     },
     lastEvent: { kind: 'pressure-warning', at: 8 },
     lastRestart: null,
@@ -480,6 +570,16 @@ test('the zh and en dictionaries cover the same keys', () => {
     'toast.action.skipped.external',
     'disclosure6',
     'disclosure7',
+    'healthTitle',
+    'healthComponentLabels.pressure',
+    'healthGrade.fair',
+    'adviceTitle',
+    'adviceKinds.action',
+    'adviceTexts.pressure-warning',
+    'adviceHows.restart-disabled',
+    'rendererTitle',
+    'minidumpTitle',
+    'minidumpUnavailable.no-dumps',
   ]) {
     assert.ok(Object.prototype.hasOwnProperty.call(zh, key), `missing ${key}`)
     assert.equal(typeof zh[key], 'string')
@@ -509,6 +609,16 @@ test('the guard card renders the attribution, pagefile, crash, history and resum
   assert.match(text, /虚拟内存配置（只读）/)
   assert.match(text, /pagefile\.sys/)
   assert.match(text, /分页文件与提交上限看起来正常/)
+  assert.match(text, /健康评分/)
+  assert.match(text, /主要扣分项/)
+  assert.match(text, /构成（满分 100）/)
+  assert.match(text, /建议清单/)
+  assert.match(text, /只读建议/)
+  assert.match(text, /提交内存已进入预警区间/)
+  assert.match(text, /渲染进程堆/)
+  assert.match(text, /崩溃转储（Crashpad）/)
+  assert.match(text, /STATUS_NO_MEMORY/)
+  assert.match(text, /模块 42 个/)
   assert.match(text, /本插件不会修改任何系统设置/)
   assert.match(text, /崩溃与内存事件（最近 7 天）/)
   assert.match(text, /渲染进程内存耗尽（OOM）/)
@@ -526,6 +636,77 @@ test('the guard card renders the attribution, pagefile, crash, history and resum
   assert.match(text, /作业对象/)
 })
 
+function findByType(node, name, out = []) {
+  if (node === null || node === undefined) return out
+  if (Array.isArray(node)) {
+    for (const child of node) findByType(child, name, out)
+    return out
+  }
+  if (typeof node === 'object' && node.type) {
+    if (typeof node.type === 'function' && node.type.name === name) out.push(node)
+    findByType(node.props?.children, name, out)
+  }
+  return out
+}
+
+test('the attribution list merges processes by program and expands to per-pid detail', async () => {
+  const { exports, react } = loadClient({ status: fullStatus() })
+  const io = fakeContext()
+  exports.apply(io.ctx)
+  const element = io.registrations[0].renderer({ view: 'page' })
+  const props = { t: io.ctx.locale.bind('settings.memory-watchdog') }
+  element.type(props)
+  await flush()
+
+  const groups = findByType(element.type(props), 'AttributionGroups')
+  assert.equal(groups.length, 1, 'the guard card renders one grouped attribution list')
+  assert.equal(groups[0].props.expandable, true)
+
+  const render = (openName) => {
+    react.setHooks([openName])
+    return JSON.stringify(groups[0].type(groups[0].props))
+  }
+
+  const closed = render(null)
+  assert.match(closed, /提交内存占用最高的程序/)
+  assert.match(closed, /DeepSeek Harness\.exe ×6/)
+  assert.match(closed, /16\.0 GiB/)
+  assert.match(closed, /展开 6 个进程/)
+  assert.match(closed, /chrome\.exe ×3/)
+  assert.match(closed, /只列出前 1 个/)
+  assert.doesNotMatch(closed, /其中 DSH/, 'a group that is entirely DSH needs no second figure')
+  assert.doesNotMatch(closed, /PID 4243/, 'collapsed rows must not leak the per-pid list')
+
+  const open = render('DeepSeek Harness.exe')
+  assert.match(open, /PID 4242/)
+  assert.match(open, /12\.0 GiB/)
+  assert.match(open, /PID 4243/)
+  assert.match(open, /4\.00 GiB/)
+  assert.match(open, /按进程名合并/)
+})
+
+test('the summary popover groups the same way but keeps the detail closed', async () => {
+  const { exports, react } = loadClient({ status: fullStatus() })
+  const io = fakeContext()
+  exports.apply(io.ctx)
+  const element = io.registrations[1].renderer({ view: 'page' })
+  const props = { ...element.props, t: io.ctx.locale.bind('settings.memory-watchdog') }
+  element.type(props)
+  await flush()
+  react.setHooks([0, true, true])
+  const popover = element.type(props).props.children.find((child) => child && child.type && child.type.name === 'SummaryPopover')
+  assert.ok(popover, 'the pill must open the summary popover')
+
+  const groups = findByType(popover.type(popover.props), 'AttributionGroups')
+  assert.equal(groups.length, 1)
+  assert.equal(groups[0].props.expandable, false, 'the popover has no room for per-pid rows')
+  assert.equal(groups[0].props.limit, 3)
+  const text = JSON.stringify(groups[0].type(groups[0].props))
+  assert.match(text, /DeepSeek Harness\.exe ×6/)
+  assert.doesNotMatch(text, /展开 6 个进程/)
+  assert.doesNotMatch(text, /按进程名合并/)
+})
+
 test('the card stays read-only: no button posts a restart or a config change', async () => {
   const { exports, fetchCalls } = loadClient({ status: fullStatus() })
   const io = fakeContext()
@@ -534,7 +715,12 @@ test('the card stays read-only: no button posts a restart or a config change', a
   element.type({ t: io.ctx.locale.bind('settings.memory-watchdog') })
   await flush()
   const paths = fetchCalls.map((call) => call.url)
-  assert.deepEqual(paths, ['/api/memory-watchdog.status'])
+  // The renderer heap report is the one outbound post the card makes on mount:
+  // it sends a number the host cannot read for itself, and it changes nothing.
+  assert.deepEqual(paths, ['/api/memory-watchdog.status', '/api/memory-watchdog.renderer'])
+  for (const call of fetchCalls) {
+    assert.doesNotMatch(call.url, /cancel|resume|plugins|restart|config|threshold/i)
+  }
 })
 
 test('diagnostics summarize the status without crash bodies or long session ids', () => {
@@ -545,7 +731,13 @@ test('diagnostics summarize the status without crash bodies or long session ids'
   assert.match(text, /collectorLag: max=.*recoveredBlips=2/)
   assert.match(text, /thresholds: warning 80% critical 90%/)
   assert.match(text, /gate\.passed share=41\.2%/)
-  assert.match(text, /DeepSeek Harness\.exe 12\.0 GiB/)
+  // Diagnostics report the grouped view the card shows, so a bug report names the
+  // program and how many processes it owns rather than one anonymous pid.
+  assert.match(text, /DeepSeek Harness\.exe x6 16\.0 GiB/)
+  assert.match(text, /health: 78 fair/)
+  assert.match(text, /adviceItems: pressure-warning\(warn\/advice\), pagefile-ok\(ok\/advice\)/)
+  assert.match(text, /rendererHeap: 512 MiB of limit 2\.00 GiB/)
+  assert.match(text, /minidumps: STATUS_NO_MEMORY/)
   assert.match(text, /D:\\pagefile\.sys 9\.77 GiB/)
   assert.match(text, /advice: pagefile\.ok/)
   assert.match(text, /crashes: 2 dsh, 5 system events in 7 days/)

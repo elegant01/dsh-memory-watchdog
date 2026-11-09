@@ -1,7 +1,9 @@
 param(
   [Parameter(Mandatory = $true)][int]$HostPid,
   [int]$MainPid = 0,
-  [int]$TopN = 5
+  [int]$TopN = 5,
+  [int]$GroupTopN = 10,
+  [int]$MemberLimit = 8
 )
 
 $ErrorActionPreference = "Stop"
@@ -243,6 +245,34 @@ foreach ($row in $top) {
   })
 }
 $top = @($detailed)
+
+# Commit pressure is caused by programs, not by process ids, and one Electron app
+# can own twenty processes. Grouping reuses the rows already collected above, so
+# it costs no extra handles; only the per-pid details stay limited to the top rows.
+$groupLimit = [Math]::Max(1, [Math]::Min(20, $GroupTopN))
+$memberLimit = [Math]::Max(1, [Math]::Min(20, $MemberLimit))
+$groups = New-Object System.Collections.ArrayList
+foreach ($bucket in ($rows | Group-Object -Property name)) {
+  $members = @($bucket.Group | Sort-Object -Property bytes -Descending)
+  $total = [int64]0
+  $treeBytes = [int64]0
+  foreach ($member in $members) {
+    $total = $total + [int64]$member.bytes
+    if ($member.dsh) { $treeBytes = $treeBytes + [int64]$member.bytes }
+  }
+  $shown = @($members | Select-Object -First $memberLimit | ForEach-Object {
+    [pscustomobject]@{ pid = [int]$_.pid; bytes = [int64]$_.bytes; dsh = [bool]$_.dsh }
+  })
+  [void]$groups.Add([pscustomobject]@{
+    name = [string]$bucket.Name
+    count = $members.Count
+    bytes = $total
+    dsh = ($treeBytes -gt 0)
+    dshBytes = $treeBytes
+    members = $shown
+  })
+}
+$groups = @($groups | Sort-Object -Property bytes -Descending | Select-Object -First $groupLimit)
 $dshPids = @($tree | Sort-Object)
 $sharePct = 0
 if ($info.commitUsed -gt 0) {
@@ -266,4 +296,5 @@ if ($info.commitUsed -gt 0) {
     sharePct = $sharePct
   }
   top = $top
-} | ConvertTo-Json -Depth 6 -Compress
+  groups = $groups
+} | ConvertTo-Json -Depth 8 -Compress

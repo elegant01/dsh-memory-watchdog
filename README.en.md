@@ -47,7 +47,7 @@ Every field is volatile, so a change applies immediately without restarting DSH.
   | critical | `>=90%` and available `<=2 GiB`, **or** `>=95%` | `<85%` back to warning |
   | unknown | missing, invalid or stale (>60 s) samples | three consecutive valid samples leave it by band: `<75%` to normal, a hot band to warning / critical |
 
-- Samples **commit attribution** every 30 seconds: how much of the commit charge the DSH process tree holds, plus the largest consumers.
+- Samples **commit attribution** every 30 seconds: how much of the commit charge the DSH process tree holds, plus a per-program breakdown (expandable to individual pids).
 - Reads the **pagefile and commit-limit configuration** every 5 minutes and gives read-only advice.
 - Builds a **7-day crash and memory-event timeline** every 10 minutes from DSH crash logs and the Windows System event log.
 - Counts every plugin's registered timers and listeners continuously (no sampling cost); with periodic sampling on, grabs a 20-second heap-allocation window every 15 minutes, ranks plugins by `node_modules/<package>`, and reports per-hour growth plus a leak-risk level. The card can sample on demand, export a `.heapprofile`, or write a heap snapshot.
@@ -57,10 +57,20 @@ Every field is volatile, so a change applies immediately without restarting DSH.
 - Sampler hiccups stay quiet: when a state enters unknown because samples went stale, the toast is **delayed by 2 minutes**; if samples come back within that window the transitions stay in the event log plus a "sample delays" counter (visible in the summary popover and the diagnostics text, with the worst lag) and no toast appears. A genuinely dead sampler still warns immediately.
 - Cooldown survives a plugin reload; records are stored locally.
 
+## Health score and the advice list
+
+- The top of the card shows a 0–100 score and a grade: good ≥90, fair ≥75, poor ≥50, bad below that. Six weighted components add up to it: commit pressure 30, commit growth 20, crashes 15, plugin memory 15, event-loop p99 latency 10 and renderer heap 10.
+- **Every point is traceable**: below the score the card lists the main deductions, then all six components with their weight, the points lost and the raw reading. A score without its numbers would be superstition.
+- **Missing data never costs points.** If a probe has not run, the sample is stale, the plugin radar is off or the renderer never reported, that component shows "no data" and costs zero — it is neither treated as perfect nor as failing. The growth component needs at least two usable hour buckets spanning 30 minutes before it concludes anything.
+- **The advice list** merges eleven sources — pagefile advice, pressure state, restart-gate verdict, high-risk plugins, heap near the limit, external memory growth, crash count, event-loop latency, process warnings, resident growth and renderer heap — into one ordered table. Each item carries a "why" and a "how", and is marked as either **read-only advice** or an **action you can take** (for example "turning automatic restart on is enough"). It is capped at eight items and says how many were folded away.
+- Pagefile advice used to render in the virtual-memory section; it now appears only here, so the same sentence never shows up twice.
+
 ## Commit attribution and the restart gate
 
 - Attribution uses one `CreateToolhelp32Snapshot` process walk plus per-process `GetProcessMemoryInfo` (`PrivateUsage`), with the system commit total as the denominator. It is read-only, never reads another process's memory, and does not use WMI/CIM. One round takes about 1.9 s on the test machine, including PowerShell startup.
-- The card shows the DSH process count, the tree's total commit, its share of the system commit charge, and the top five processes (name + PID + commit).
+- The card shows the DSH process count, the tree's total commit, its share of the system commit charge, and the **top five programs** by commit (`name ×process count`, total bytes, share of the system commit). One Electron app often owns a dozen processes, so a per-pid list alone hides who is actually driving the commit charge.
+- Each row expands into that program's individual processes with their commit, uptime and executable path; the expansion lists the eight largest, while the `×N` count is always the real total.
+- Grouping reuses the process names from the same snapshot, so it opens no extra handles and adds no measurable probe time. The trade-off is that **one name is one group**: old and new versions of the same executable (for example a leftover instance after an upgrade) share a row, and the expansion separates them by pid and path.
 - **Restart gate**: by default an automatic restart is only allowed when the DSH process tree holds at least 20% of the commit charge. If the share is lower, or attribution data is missing or older than 60 seconds, the restart is **blocked** (fail closed) and the reason is shown in the card and a toast — once per critical episode, not in a loop. Set `restartGatePct` to 0 to turn the check off.
 
 ## Pagefile advice (read-only)
@@ -120,6 +130,20 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 - Expired buckets are pruned against "midnight today minus 13 days", so the retention window rolls over instead of counting from startup.
 - A bucket whose histogram went missing (hand-edited file, written by an older version) is dropped as invalid rather than read as 0 — otherwise the trend line would be silently flattened and look like "that day was idle".
 - Buckets follow the local clock: a machine at UTC+05:30 must still get one bucket per local hour, never a UTC cut.
+
+## Renderer heap (a total, not an attribution)
+
+- The renderer that draws the UI and the Host process are two separate heaps. The Host can read its own and cannot reach the renderer's, so the client reads `performance.memory` (Chromium only) and posts `usedJSHeapSize` / `totalJSHeapSize` / `jsHeapSizeLimit` to `POST /api/memory-watchdog.renderer`; the host keeps only the latest reading and the card shows used against the limit.
+- **This is a total, not per-plugin attribution.** Which plugin inside the renderer holds how much is invisible to this plugin, and deliberately out of scope; per-plugin attribution lives on the Host side, see "Plugin memory".
+- Reports are throttled to one per 30 seconds and the card sends one on mount. If no new reading arrives for 120 seconds the figure is marked stale — **the last number is kept but marked unavailable**, it is never shown as 0 and never presented as current.
+- A single reading above 64 GiB is rejected as nonsense. A browser without `performance.memory` is recorded as "unsupported", which is a lasting state: it does not turn into "stale" over time.
+
+## Crash dumps (Crashpad, parsed on demand)
+
+- The card has a **Parse recent dumps** button that calls `POST /api/memory-watchdog.minidump` and scans `%LOCALAPPDATA%\@deepseek-ai\dsh-desktop\Crashpad\reports\*.dmp` (the same layout under `%APPDATA%` is also tried).
+- Only the **header, module list, memory info list and exception stream** are parsed: it reports the crash code (for example `STATUS_NO_MEMORY` or `STATUS_STACK_BUFFER_OVERRUN`), the thread, the five largest modules, and the memory-range count with committed/reserved totals. It **never reads the full memory streams**, and never writes, changes or deletes a file.
+- Limits: a single `.dmp` above 512 MiB is skipped (by stat size, without reading it), at most five files are opened per scan, only one scan runs at a time, and one bad file does not fail the rest.
+- On the test machine DSH currently does **not** enable Crashpad — the directory does not exist — so this button normally reports "directory not found". That is not a failure; it means DSH never turned dumps on. If dumps do appear, it parses them as described.
 
 ## Diagnostics bundle (one click)
 
@@ -196,6 +220,8 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, and
 - The helper starts only for an actual handoff and does not stay resident.
 - The plugin-memory radar is plain JS counting and costs next to nothing; allocation sampling only records during the window and aggregates once at the end, so its cost scales with the allocation rate. Writing a `.heapsnapshot` pauses the Host for hundreds of milliseconds to seconds depending on heap size; the card warns first.
 - The 14-day trend rewrites `trend.json` every 10 minutes (hourly buckets and histograms only, never raw samples); the diagnostics bundle is built on demand; the snapshot diff streams both files in 1 MiB chunks and keeps only one node array at a time (1.5 GiB per file, 40 million nodes, 120 s timeout), with one comparison allowed at a time.
+- The health score and the advice list are pure in-memory computations derived from the status snapshot; they add no sampling and write nothing to disk.
+- The renderer heap report is at most one post every 30 seconds carrying three numbers; minidumps are read only when the button is pressed, and only the header and a few tables are touched, with a 512 MiB per-file cap.
 
 ## Notification boundary
 
@@ -215,6 +241,9 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 - The OOM classes (heap / external / system) are heuristic conclusions drawn from the last black box point, not minidump-grade evidence: the black box keeps one point per 4 seconds and at most 12 points, so the tail covers roughly 48 seconds, and the ±2 minute alignment window is there to absorb log flush delay.
 - Trend p50/p95 come from a fixed 2%-wide histogram: good enough for a trend line, not exact values; read the live pressure snapshot for those. Only buckets are persisted, never raw samples, so history outside the retained buckets cannot be reconstructed.
 - The snapshot diff reads only the `snapshot` and `nodes` sections, never `edges` or retainers, so it answers which kinds of objects grew or shrank, not who retains them. `hidden` and `synthetic` type nodes and internal names starting with `(` are skipped, and nodes sharing a constructor name are merged.
+- The health score is a weighted sum, not a physical quantity: the weights are fixed in `HEALTH_WEIGHTS` in `lib/health.js`, and changing them changes the score. It folds six kinds of risk into one glanceable scale; the judgement still rests on the raw readings and the deduction breakdown shown underneath. A component without data is marked "no data" rather than counted as perfect or as failing.
+- The renderer heap is a total with no attribution, and it only exists while the page is open — a closed page means "no data". It comes from `performance.memory`, which Chromium documents as an estimate rather than an exact residency figure, so treat it as a trend reference, not a ledger.
+- Crash dump parsing stops at the module and memory-table level: no call stack, no register context, no symbolisation. It says which module crashed and what memory looked like, not which line. DSH does not enable Crashpad today, so on the reference machine this feature usually has no data.
 - Different Windows / DSH launch paths may change the job flags. When the helper self-check finds it runs inside a job, it measures whether a new process can escape that job by starting two no-op children that exit immediately: if the escape works, automatic restart stays available (the card shows which escape was used); if it does not, the check fails closed. No process is ever terminated by this probe. Switching to a taskbar / Explorer launch only helps when that job came from the terminal or agent that started DSH - on the reference machine DSH creates a job for its own process tree, so the launch path changes nothing.
 - Real-world restarts, different launch paths and long-term stability still need to be verified against the release checklist.
 

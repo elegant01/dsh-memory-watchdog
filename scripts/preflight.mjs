@@ -25,6 +25,10 @@ const REQUIRED_FILES = [
   'lib/redact.js',
   'lib/bundle.js',
   'lib/resume.js',
+  'lib/health.js',
+  'lib/advice.js',
+  'lib/renderer-heap.js',
+  'lib/crashpad.js',
   'lib/client/index.js',
   'lib/resources/collector.ps1',
   'lib/resources/jobcheck.ps1',
@@ -189,6 +193,10 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'top:exe-path', /QueryFullProcessImageNameW/.test(source))
     check(checks, 'top:age', /GetProcessTimes/.test(source))
     check(checks, 'top:no-handle-leak', /finally\s*\{[\s\S]{0,80}CloseHandle/.test(source))
+    // The card answers "which program is eating commit", so the probe must group
+    // every accessible process by name, not just the rows it fetched details for.
+    check(checks, 'top:groups', /Group-Object -Property name/.test(source))
+    check(checks, 'top:groups-capped', /Select-Object -First \$groupLimit/.test(source))
   }
 
   const routesPath = join(root, 'lib/routes.js')
@@ -197,6 +205,43 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'routes:events', source.includes('/api/memory-watchdog.events') && /methods:\s*\['GET'\]/.test(source))
     check(checks, 'routes:resume-post', source.includes('/api/memory-watchdog.resume') && /resume-disabled/.test(source))
     check(checks, 'routes:bundle-attachment', source.includes('/api/memory-watchdog.bundle') && /content-disposition/.test(source))
+    check(
+      checks,
+      'routes:renderer-post',
+      source.includes('/api/memory-watchdog.renderer') && /methods:\s*\['POST'\]/.test(source),
+      'the renderer heap figure must arrive over its own POST route',
+    )
+    check(
+      checks,
+      'routes:minidump-post',
+      source.includes('/api/memory-watchdog.minidump') && /methods:\s*\['POST'\]/.test(source),
+      'minidump parsing must be user-triggered, not polled',
+    )
+  }
+
+  const healthPath = join(root, 'lib/health.js')
+  if (await exists(healthPath)) {
+    const source = await readFile(healthPath, 'utf8')
+    // A score whose parts do not add up to 100 is not explainable, and the card
+    // promises an explanation next to the number.
+    check(checks, 'health:weights', /HEALTH_WEIGHTS\s*=/.test(source) && /computeHealth/.test(source))
+    check(checks, 'health:missing-is-not-a-penalty', /available:\s*false,\s*penalty:\s*0/.test(source) || /penalty:\s*0,\s*available:\s*false/.test(source))
+  }
+
+  const advicePath = join(root, 'lib/advice.js')
+  if (await exists(advicePath)) {
+    const source = await readFile(advicePath, 'utf8')
+    // The list merges sources that used to render separately, so an uncapped
+    // merge would silently duplicate the pagefile suggestion.
+    check(checks, 'advice:dedupe', /seen\.has\(entry\.key\)/.test(source))
+    check(checks, 'advice:capped', /ADVICE_MAX_ITEMS/.test(source))
+  }
+
+  const crashpadPath = join(root, 'lib/crashpad.js')
+  if (await exists(crashpadPath)) {
+    const source = await readFile(crashpadPath, 'utf8')
+    check(checks, 'crashpad:read-only', !/writeFile|unlink|rm\(/.test(source), 'the dump reader must never write or delete')
+    check(checks, 'crashpad:size-limit', /CRASHPAD_MAX_FILE_BYTES/.test(source))
   }
 
   const clientPath = join(root, 'lib/client/index.js')
@@ -210,7 +255,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'client:disclosure-gate', client.includes('disclosure6') && client.includes('disclosure7'))
     check(checks, 'client:events-route', client.includes('/api/memory-watchdog.events'))
     check(checks, 'client:resume-route', client.includes('/api/memory-watchdog.resume'))
-    for (const section of ['attributionTitle', 'residentGrowLabel', 'systemTitle', 'crashTitle', 'historyTitle', 'trendTitle', 'resumeTitle', 'copyDiagnostics', 'bundle', 'bundleNote']) {
+    for (const section of ['healthTitle', 'adviceTitle', 'rendererTitle', 'minidumpTitle', 'attributionTitle', 'attributionGroupLabel', 'residentGrowLabel', 'systemTitle', 'crashTitle', 'historyTitle', 'trendTitle', 'resumeTitle', 'copyDiagnostics', 'bundle', 'bundleNote']) {
       check(checks, `client:section:${section}`, client.includes(section), section)
     }
     check(checks, 'client:read-only', !/-HostPid|-MainPid|scriptPath|spawnProcess|-File\s|taskkill|Stop-Process/i.test(client))
