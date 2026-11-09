@@ -121,14 +121,17 @@ async function withTempDir(prefix) {
 }
 
 test('the crashpad directory is resolved under the dsh desktop app data folder', () => {
-  const resolved = resolveCrashpadDir({
-    LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local',
-    APPDATA: 'C:\\Users\\x\\AppData\\Roaming',
-  })
+  const local = 'C:\\Users\\x\\AppData\\Local'
+  const roaming = 'C:\\Users\\x\\AppData\\Roaming'
+  const resolved = resolveCrashpadDir({ LOCALAPPDATA: local, APPDATA: roaming })
+  // Separators come from `path.join`, so the expectation has to be built the same
+  // way: CI runs on Linux and a backslash-only assertion fails there for a reason
+  // that has nothing to do with the code under test.
   assert.equal(resolved.candidates.length, 4)
-  assert.match(resolved.candidates[0], /AppData\\Local/)
-  assert.match(resolved.candidates[0], /@deepseek-ai\\dsh-desktop/)
-  assert.match(resolved.candidates[0], /Crashpad\\reports$/)
+  assert.equal(resolved.candidates[0], join(local, '@deepseek-ai', 'dsh-desktop', 'Crashpad', 'reports'))
+  assert.equal(resolved.candidates[1], join(local, '@deepseek-ai', 'dsh-desktop', 'Crashpad'))
+  assert.equal(resolved.candidates[2], join(roaming, '@deepseek-ai', 'dsh-desktop', 'Crashpad', 'reports'))
+  assert.equal(resolved.candidates[3], join(roaming, '@deepseek-ai', 'dsh-desktop', 'Crashpad'))
   assert.equal(resolved.dir, resolved.candidates[0])
   // With no environment at all there is nothing to probe, and that is not a crash.
   assert.deepEqual(resolveCrashpadDir({}), { candidates: [], dir: null })
