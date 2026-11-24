@@ -960,3 +960,73 @@ test('kill only reaches listed third-party pids and re-checks through the helper
   assert.equal((await refusing.rt.killProcess(9012)).code, 'stale-attribution')
   await refusing.cleanup()
 })
+
+function groupFixture() {
+  const g = GIB
+  return [
+    {
+      name: 'chrome.exe',
+      count: 2,
+      bytes: 6 * g,
+      dsh: false,
+      dshBytes: 0,
+      members: [
+        { pid: 9012, bytes: 4 * g, dsh: false },
+        { pid: 9020, bytes: 2 * g, dsh: false },
+      ],
+    },
+    { name: 'node.exe', count: 1, bytes: 3 * g, dsh: true, dshBytes: 3 * g, members: [{ pid: 9013, bytes: 3 * g, dsh: true }] },
+    { name: 'svchost.exe', count: 1, bytes: 2 * g, dsh: false, dshBytes: 0, members: [{ pid: 9014, bytes: 2 * g, dsh: false }] },
+    {
+      name: 'big.exe',
+      count: 3,
+      bytes: 5 * g,
+      dsh: false,
+      dshBytes: 0,
+      members: [
+        { pid: 9031, bytes: 3 * g, dsh: false },
+        { pid: 9032, bytes: 2 * g, dsh: false },
+      ],
+    },
+  ]
+}
+
+test('whole-program kill acts on the fresh probe and refuses DSH, system or truncated groups', async () => {
+  const calls = []
+  const attribution = async () => ({ ok: true, systemCommitUsed: 40 * GIB, dsh: { bytes: 3 * GIB, count: 1 }, groups: groupFixture() })
+  const h = await harness({
+    attribution,
+    runJson: async (options) => {
+      calls.push(options)
+      return { ok: true, value: { ok: true, killed: 2, skipped: 0, failed: 0 } }
+    },
+  })
+  assert.equal((await h.rt.killProcessGroup('node.exe')).code, 'dsh-process')
+  assert.equal((await h.rt.killProcessGroup('svchost.exe')).code, 'protected-process')
+  assert.equal((await h.rt.killProcessGroup('gone.exe')).code, 'unknown-name')
+  assert.equal((await h.rt.killProcessGroup('big.exe')).code, 'group-truncated')
+  assert.equal((await h.rt.killProcessGroup('')).code, 'invalid-name')
+  assert.equal(calls.length, 0)
+
+  const killed = await h.rt.killProcessGroup('chrome.exe')
+  assert.equal(killed.ok, true)
+  assert.equal(killed.killed, 2)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].args[0], '-PlanJson')
+  assert.deepEqual(JSON.parse(calls[0].args[1]), [
+    { pid: 9012, name: 'chrome.exe' },
+    { pid: 9020, name: 'chrome.exe' },
+  ])
+  assert.ok(h.rt.notices.some((notice) => notice.code === 'process.killGroup'))
+  await h.cleanup()
+
+  const failing = await harness({
+    attribution,
+    runJson: async () => ({ ok: true, value: { ok: false, killed: 0, skipped: 2, failed: 0 } }),
+  })
+  const failed = await failing.rt.killProcessGroup('chrome.exe')
+  assert.equal(failed.ok, false)
+  assert.equal(failed.code, 'kill-failed')
+  assert.ok(failing.rt.notices.some((notice) => notice.code === 'process.kill.failed'))
+  await failing.cleanup()
+})

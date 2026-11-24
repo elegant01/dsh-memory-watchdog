@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { findKillTarget, guardKillTarget, killResultStatus, processBaseName } from '../lib/process-kill.js'
+import { findKillGroup, findKillTarget, guardKillGroup, guardKillTarget, killResultStatus, processBaseName } from '../lib/process-kill.js'
 import { ATTRIBUTION_MAX_AGE_MS } from '../lib/constants.js'
 
 const GIB = 1024 ** 3
@@ -70,4 +70,22 @@ test('kill result codes map to HTTP statuses', () => {
   assert.equal(killResultStatus({ ok: false, code: 'stale-attribution' }), 409)
   assert.equal(killResultStatus({ ok: false, code: 'unknown-pid' }), 409)
   assert.equal(killResultStatus({ ok: false, code: 'kill-failed' }), 503)
+})
+
+test('whole-program targets refuse DSH membership and truncated member lists', () => {
+  const now = 1_700_000_000_000
+  const value = attribution(now)
+  const dsh = findKillGroup(value, 'node.exe', now)
+  assert.equal(dsh.ok, true)
+  assert.equal(guardKillGroup(dsh).code, 'dsh-process')
+
+  const chrome = findKillGroup(value, 'chrome.exe', now)
+  assert.equal(chrome.ok, true)
+  assert.equal(guardKillGroup(chrome).ok, true)
+
+  value.groups.push({ name: 'big.exe', count: 5, dsh: false, members: [{ pid: 9101, bytes: GIB, dsh: false }] })
+  assert.equal(guardKillGroup(findKillGroup(value, 'big.exe', now)).code, 'group-truncated')
+  assert.equal(findKillGroup(value, 'missing.exe', now).code, 'unknown-name')
+  assert.equal(findKillGroup(value, '', now).code, 'invalid-name')
+  assert.equal(killResultStatus({ ok: false, code: 'group-truncated' }), 409)
 })

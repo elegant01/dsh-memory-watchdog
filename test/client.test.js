@@ -699,12 +699,16 @@ test('the summary popover groups the same way but keeps the detail closed', asyn
 
   const groups = findByType(popover.type(popover.props), 'AttributionGroups')
   assert.equal(groups.length, 1)
-  assert.equal(groups[0].props.expandable, false, 'the popover has no room for per-pid rows')
+  assert.equal(groups[0].props.expandable, true, 'the popover carries the same per-pid actions as the card')
   assert.equal(groups[0].props.limit, 3)
   const text = JSON.stringify(groups[0].type(groups[0].props))
   assert.match(text, /DeepSeek Harness\.exe ×6/)
-  assert.doesNotMatch(text, /展开 6 个进程/)
-  assert.doesNotMatch(text, /按进程名合并/)
+  assert.match(text, /展开 6 个进程/)
+  assert.match(text, /按进程名合并/)
+  assert.match(text, /结束按程序名整组执行/)
+  assert.match(text, /DSH 自己的进程，不在这里结束/)
+  assert.match(text, /"结束"/, 'the third-party program row carries the whole-program end button')
+  assert.doesNotMatch(text, /PID 4243/, 'the popover still keeps per-pid detail collapsed until asked')
 })
 
 test('the card stays read-only: no button posts a restart or a config change', async () => {
@@ -759,17 +763,22 @@ test('third-party pids get an end button while DSH pids never do', async () => {
   await flush()
 
   const groups = findByType(element.type(props), 'AttributionGroups')
-  const render = (openName) => {
-    react.setHooks([openName])
+  const countOf = (text, needle) => text.split(needle).length - 1;
+  const render = (openName, killState) => {
+    react.setHooks(killState === undefined ? [openName] : [openName, killState])
     return JSON.stringify(groups[0].type(groups[0].props))
   }
 
   const dsh = render('DeepSeek Harness.exe')
   assert.match(dsh, /DSH 自己的进程，不在这里结束/)
-  assert.doesNotMatch(dsh, /"结束"/)
+  assert.equal(countOf(dsh, '"结束"'), 1, 'only the chrome program row, never the DSH program or its pids')
 
   const chrome = render('chrome.exe')
-  assert.match(chrome, /"结束"/)
-  assert.match(chrome, /只结束选中的这一个 PID/)
+  assert.equal(countOf(chrome, '"结束"'), 2, 'the program row plus the expanded pid row')
+  assert.match(chrome, /结束按程序名整组执行/)
   assert.match(chrome, /PID 999/)
+
+  const confirm = render('chrome.exe', { key: 'gchrome.exe', phase: 'confirm' })
+  assert.match(confirm, /结束 chrome\.exe 的全部 3 个进程？/)
+  assert.match(confirm, /全部结束/)
 })

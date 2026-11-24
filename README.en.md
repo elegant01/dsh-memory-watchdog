@@ -147,11 +147,11 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 
 ## Ending a process (manual)
 
-- Expand "Largest commit consumers by program" and every PID row has an **End** button; clicking it asks for confirmation and calls `POST /api/memory-watchdog.kill` with `{"pid":1234}`.
-- Only pids from the **latest attribution sample** are accepted (a sample older than 60 seconds asks you to wait for the next refresh). Anything outside that list is refused, so this is not a "kill any process" endpoint.
-- DSH's own processes, the host process and critical Windows processes (explorer, svchost, lsass, dwm, …) are refused regardless of what the list says.
-- Before killing, the helper re-checks the pid together with the image name: a pid recycled by another program returns `name-mismatch` and is left alone.
-- Only the selected pid is ended — never a whole program by name — and the outcome is recorded as a notice in the card.
+- Every row under "Largest commit consumers by program" has an **End** button; after confirmation it ends all processes of that **program** from a fresh attribution sample via `POST /api/memory-watchdog.kill` with `{"name":"chrome.exe"}`. Expanding a row also allows ending a single PID (`{"pid":1234}`).
+- Only program names from the **latest attribution sample** are accepted, and the host samples again on click (member cap 256) instead of trusting the list on screen; a stale sample, a vanished program or an incomplete member list is refused.
+- A group that contains any DSH process is refused as a whole (for example when DSH itself runs inside `node.exe`), as are critical Windows processes (explorer, svchost, lsass, dwm, …).
+- Before each pid is stopped the helper re-checks pid and image name, so a recycled pid is skipped rather than hit.
+- The outcome (ended / skipped / refused) is recorded as a notice in the card.
 
 ## Diagnostics bundle (one click)
 
