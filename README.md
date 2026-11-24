@@ -146,6 +146,14 @@ Windows 版 DSH Desktop 的提交内存（commit charge）看门狗。它持续�
 - 边界：单个 `.dmp` 超过 512 MiB 直接跳过（只看 stat 大小，不读进内存）；单次最多看 5 份；同一时间只允许一次扫描；某一份坏掉不影响其余。
 - 本机实测 DSH 目前**没有启用 Crashpad**（该目录不存在），所以这个按钮通常显示「没找到目录」。这不是故障，是 DSH 侧没开——真要有 dump，它会如实解析。
 
+## 结束进程（手动）
+
+- 面板「提交内存占用最高的程序」展开后，每个 PID 行有「结束」按钮，点击后再确认一次，走 `POST /api/memory-watchdog.kill`（body 为 `{"pid":1234}`）。
+- 只接受**最近一次归因采样里出现过的 PID**（采样超过 60 秒则要求等下一轮刷新），列表之外的 PID 一律拒绝——这不是一个「杀任意进程」的接口。
+- DSH 自身的进程、Host 进程与 Windows 关键进程（explorer、svchost、lsass、dwm 等）无论列表怎么写都拒绝。
+- 真正结束前 helper 会用 PID + 进程名再核对一次：PID 已被别的程序占用时返回 `name-mismatch` 并放弃，不会误杀。
+- 只结束选中的那一个 PID，不按程序名批量结束；成功或失败都会在面板里留一条通知。
+
 ## 诊断包（一键下载）
 
 - 面板右下「下载诊断包」按钮打出一个 JSON 附件，文件名形如 `dsh-memory-watchdog-diagnostics-2026-10-30T15-04-11-000Z.json`。内容是状态摘要、最近 50 条事件、`trend.json`、`plugin-memory.json`、`blackbox.json` 与 `capability.json`。

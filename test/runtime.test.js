@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { GuardRuntime } from '../lib/runtime.js'
-import { COOLDOWN_MS, RESUME_SCAN_DELAYS_MS, STALE_AFTER_MS, STALE_NOTICE_DELAY_MS } from '../lib/constants.js'
+import { ATTRIBUTION_MAX_AGE_MS, COOLDOWN_MS, RESUME_SCAN_DELAYS_MS, STALE_AFTER_MS, STALE_NOTICE_DELAY_MS } from '../lib/constants.js'
 import { driveToCritical, driveToWarning, makeClock, makeTempDir, primeNormal, sample, settle, GIB } from './helpers.js'
 
 const MIB = 1024 * 1024
@@ -155,6 +155,7 @@ async function harness(options = {}) {
   if (options.heapWatch !== undefined) deps.heapWatch = options.heapWatch
   if (options.crashpadProbe !== undefined) deps.crashpadProbe = options.crashpadProbe
   if (options.rendererHeap !== undefined) deps.rendererHeap = options.rendererHeap
+  if (options.runJson !== undefined) deps.runJson = options.runJson
   const rt = new GuardRuntime({
     ctx: { get: () => undefined },
     rawConfig,
@@ -904,4 +905,58 @@ test('heap warnings fire once per episode and the heap snapshot is exposed', asy
   await h.feed(54)
   assert.equal(h.rt.status().notices.filter((notice) => notice.code === 'heap.external-growth').length, 2)
   await h.cleanup()
+})
+
+function killAttribution(clock) {
+  const g = GIB
+  return {
+    ok: true,
+    at: clock.now,
+    top: [
+      { pid: 9012, parentPid: null, name: 'chrome.exe', bytes: 8 * g, dsh: false },
+      { pid: 9013, parentPid: null, name: 'node.exe', bytes: 6 * g, dsh: true },
+      { pid: 4242, parentPid: null, name: 'code.exe', bytes: 2 * g, dsh: false },
+    ],
+    groups: [
+      { name: 'chrome.exe', count: 1, bytes: 8 * g, dsh: false, dshBytes: 0, members: [{ pid: 9012, bytes: 8 * g, dsh: false }] },
+      { name: 'node.exe', count: 1, bytes: 6 * g, dsh: true, dshBytes: 6 * g, members: [{ pid: 9013, bytes: 6 * g, dsh: true }] },
+      { name: 'svchost.exe', count: 1, bytes: 2 * g, dsh: false, dshBytes: 0, members: [{ pid: 9014, bytes: 2 * g, dsh: false }] },
+      { name: 'code.exe', count: 1, bytes: 2 * g, dsh: false, dshBytes: 0, members: [{ pid: 4242, bytes: 2 * g, dsh: false }] },
+    ],
+  }
+}
+
+test('kill only reaches listed third-party pids and re-checks through the helper', async () => {
+  const calls = []
+  const runJson = async (options) => {
+    calls.push(options)
+    return { ok: true, value: { ok: true, code: 'killed' } }
+  }
+  const h = await harness({ runJson })
+  h.rt.attribution = killAttribution(h.clock)
+  assert.equal((await h.rt.killProcess(9013)).code, 'dsh-process')
+  assert.equal((await h.rt.killProcess(9014)).code, 'protected-process')
+  assert.equal((await h.rt.killProcess(4242)).code, 'protected-process')
+  assert.equal((await h.rt.killProcess(9099)).code, 'unknown-pid')
+  assert.equal((await h.rt.killProcess(1)).code, 'invalid-pid')
+  assert.equal(calls.length, 0)
+
+  const killed = await h.rt.killProcess(9012)
+  assert.equal(killed.ok, true)
+  assert.equal(killed.name, 'chrome.exe')
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].args, ['-TargetPid', '9012', '-ExpectedName', 'chrome.exe'])
+  assert.ok(h.rt.notices.some((notice) => notice.code === 'process.kill'))
+  await h.cleanup()
+
+  const refusing = await harness({ runJson: async () => ({ ok: true, value: { ok: false, code: 'name-mismatch' } }) })
+  refusing.rt.attribution = killAttribution(refusing.clock)
+  const refused = await refusing.rt.killProcess(9012)
+  assert.equal(refused.ok, false)
+  assert.equal(refused.code, 'name-mismatch')
+  assert.ok(refusing.rt.notices.some((notice) => notice.code === 'process.kill.failed'))
+
+  refusing.clock.advance(ATTRIBUTION_MAX_AGE_MS + 1000)
+  assert.equal((await refusing.rt.killProcess(9012)).code, 'stale-attribution')
+  await refusing.cleanup()
 })

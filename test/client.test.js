@@ -748,3 +748,28 @@ test('diagnostics summarize the status without crash bodies or long session ids'
   assert.doesNotMatch(text, /abcdef123456/)
   assert.equal(exports.buildDiagnostics(null), 'dsh-memory-watchdog: no status')
 })
+
+test('third-party pids get an end button while DSH pids never do', async () => {
+  const { exports, react } = loadClient({ status: fullStatus() })
+  const io = fakeContext()
+  exports.apply(io.ctx)
+  const element = io.registrations[0].renderer({ view: 'page' })
+  const props = { t: io.ctx.locale.bind('settings.memory-watchdog') }
+  element.type(props)
+  await flush()
+
+  const groups = findByType(element.type(props), 'AttributionGroups')
+  const render = (openName) => {
+    react.setHooks([openName])
+    return JSON.stringify(groups[0].type(groups[0].props))
+  }
+
+  const dsh = render('DeepSeek Harness.exe')
+  assert.match(dsh, /DSH 自己的进程，不在这里结束/)
+  assert.doesNotMatch(dsh, /"结束"/)
+
+  const chrome = render('chrome.exe')
+  assert.match(chrome, /"结束"/)
+  assert.match(chrome, /只结束选中的这一个 PID/)
+  assert.match(chrome, /PID 999/)
+})

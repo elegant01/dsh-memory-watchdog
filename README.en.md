@@ -145,6 +145,14 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 - Limits: a single `.dmp` above 512 MiB is skipped (by stat size, without reading it), at most five files are opened per scan, only one scan runs at a time, and one bad file does not fail the rest.
 - On the test machine DSH currently does **not** enable Crashpad — the directory does not exist — so this button normally reports "directory not found". That is not a failure; it means DSH never turned dumps on. If dumps do appear, it parses them as described.
 
+## Ending a process (manual)
+
+- Expand "Largest commit consumers by program" and every PID row has an **End** button; clicking it asks for confirmation and calls `POST /api/memory-watchdog.kill` with `{"pid":1234}`.
+- Only pids from the **latest attribution sample** are accepted (a sample older than 60 seconds asks you to wait for the next refresh). Anything outside that list is refused, so this is not a "kill any process" endpoint.
+- DSH's own processes, the host process and critical Windows processes (explorer, svchost, lsass, dwm, …) are refused regardless of what the list says.
+- Before killing, the helper re-checks the pid together with the image name: a pid recycled by another program returns `name-mismatch` and is left alone.
+- Only the selected pid is ended — never a whole program by name — and the outcome is recorded as a notice in the card.
+
 ## Diagnostics bundle (one click)
 
 - The **Download diagnostics** button saves a single JSON attachment named `dsh-memory-watchdog-diagnostics-2026-10-30T15-04-11-000Z.json`. It holds a status summary, the last 50 events, `trend.json`, `plugin-memory.json`, `blackbox.json` and `capability.json`.
