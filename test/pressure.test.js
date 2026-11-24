@@ -130,6 +130,22 @@ test('warning returns to normal only below 75%, not at 76%', () => {
   assert.equal(machine.state, 'normal')
 })
 
+test('unknown leaves the 75-80% hysteresis band for normal', () => {
+  const clock = makeClock()
+  const fresh = new PressureMachine({ now: () => clock.now })
+  assert.equal(feedMany(fresh, [76, 76], clock).length, 0)
+  assert.equal(fresh.state, 'unknown')
+  const recovered = feedMany(fresh, [76], clock)
+  assert.equal(recovered.length, 1)
+  assert.equal(recovered[0].to, 'normal')
+  assert.equal(fresh.state, 'normal')
+
+  const lost = new PressureMachine({ now: () => clock.now })
+  lost.markUnavailable('stale-sample', clock.now)
+  assert.equal(feedMany(lost, [76, 76, 76], clock).length, 1)
+  assert.equal(lost.state, 'normal')
+})
+
 test('unknown never becomes normal from a single valid sample', () => {
   const clock = makeClock()
   const machine = new PressureMachine({ now: () => clock.now })
