@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { GuardRuntime } from '../lib/runtime.js'
+import { normalizeAttribution } from '../lib/attribution.js'
 import { ATTRIBUTION_MAX_AGE_MS, COOLDOWN_MS, RESUME_SCAN_DELAYS_MS, STALE_AFTER_MS, STALE_NOTICE_DELAY_MS } from '../lib/constants.js'
 import { driveToCritical, driveToWarning, makeClock, makeTempDir, primeNormal, sample, settle, GIB } from './helpers.js'
 
@@ -1029,4 +1030,28 @@ test('whole-program kill acts on the fresh probe and refuses DSH, system or trun
   assert.equal(failed.code, 'kill-failed')
   assert.ok(failing.rt.notices.some((notice) => notice.code === 'process.kill.failed'))
   await failing.cleanup()
+})
+
+test('whole-program kill accepts the already-normalized sample the real probe returns', async () => {
+  const calls = []
+  let sample = null
+  const h = await harness({
+    attribution: async () => sample,
+    runJson: async (options) => {
+      calls.push(options)
+      return { ok: true, value: { ok: true, killed: 2, skipped: 0, failed: 0 } }
+    },
+  })
+  // sampleAttribution hands back a normalized object; re-normalizing it used to
+  // drop dshBytes and fail the sample, which surfaced as "stale process list".
+  sample = normalizeAttribution(
+    { ok: true, systemCommitUsed: 40 * GIB, dsh: { bytes: 3 * GIB, count: 1 }, groups: groupFixture() },
+    { at: h.clock.now },
+  )
+  assert.equal(sample.ok, true)
+  const killed = await h.rt.killProcessGroup('chrome.exe')
+  assert.equal(killed.ok, true)
+  assert.equal(killed.killed, 2)
+  assert.equal(calls.length, 1)
+  await h.cleanup()
 })

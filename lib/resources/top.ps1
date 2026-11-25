@@ -250,7 +250,7 @@ $top = @($detailed)
 # can own twenty processes. Grouping reuses the rows already collected above, so
 # it costs no extra handles; only the per-pid details stay limited to the top rows.
 $groupLimit = [Math]::Max(1, [Math]::Min(20, $GroupTopN))
-$memberLimit = [Math]::Max(1, [Math]::Min(20, $MemberLimit))
+$memberLimit = [Math]::Max(1, [Math]::Min(512, $MemberLimit))
 $groups = New-Object System.Collections.ArrayList
 foreach ($bucket in ($rows | Group-Object -Property name)) {
   $members = @($bucket.Group | Sort-Object -Property bytes -Descending)
