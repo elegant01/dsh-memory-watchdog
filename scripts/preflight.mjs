@@ -29,6 +29,8 @@ const REQUIRED_FILES = [
   'lib/advice.js',
   'lib/renderer-heap.js',
   'lib/crashpad.js',
+  'lib/incidents.js',
+  'lib/orphans.js',
   'lib/client/index.js',
   'lib/resources/collector.ps1',
   'lib/resources/jobcheck.ps1',
@@ -40,6 +42,8 @@ const REQUIRED_FILES = [
   'lib/resources/top.ps1',
   'lib/resources/system-info.ps1',
   'lib/resources/crash-history.ps1',
+  'lib/resources/orphans.ps1',
+  'lib/resources/orphan-kill.ps1',
   'lib/resources/helper.mjs',
   'README.md',
   'README.en.md',
@@ -64,6 +68,8 @@ const REQUIRED_PS1 = [
   'lib/resources/top.ps1',
   'lib/resources/system-info.ps1',
   'lib/resources/crash-history.ps1',
+  'lib/resources/orphans.ps1',
+  'lib/resources/orphan-kill.ps1',
 ]
 
 const FORBIDDEN_SOURCE_PATTERNS = [
@@ -148,6 +154,9 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'config:volatile-default-false', /\.default\(false\)\s*\.volatile\(\)/.test(source))
     check(checks, 'config:autoRestart', /autoRestart/.test(source))
     check(checks, 'config:resume-default-false', /resumeAfterCrash:\s*z[\s\S]{0,40}\.default\(false\)/.test(source))
+    for (const field of ['incidentSnapshot', 'orphanScan', 'pressureBackoff']) {
+      check(checks, `config:default-on:${field}`, new RegExp(`${field}:\\s*z[\\s\\S]{0,40}\\.default\\(true\\)`).test(source), field)
+    }
     for (const field of ['warningPct', 'criticalPct', 'criticalAvailMb', 'confirmSamples', 'cooldownMinutes', 'restartGatePct', 'residentGrowMb']) {
       check(checks, `config:threshold-field:${field}`, new RegExp(`${field}:\\s*z[\\s\\S]{0,16}\\.number\\(\\)`).test(source), field)
     }
@@ -168,6 +177,9 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'runtime:gate-armed', /evaluateRestartGate|this\.restartGate\(\)/.test(source))
     check(checks, 'runtime:probes-failable', /refreshAttribution/.test(source) && /refreshSystemInfo/.test(source) && /refreshCrashHistory/.test(source))
     check(checks, 'runtime:resume-scheduled', /startResumeScheduler/.test(source) && /stopResumeScheduler/.test(source))
+    check(checks, 'runtime:incidents', /captureIncident\(/.test(source) && /INCIDENT_LIMIT/.test(source))
+    check(checks, 'runtime:orphans', /scanOrphans\(/.test(source) && /killOrphan\(/.test(source))
+    check(checks, 'runtime:pressure-backoff', /applyPressureBackoff\(/.test(source) && /pressure-critical/.test(source))
   }
 
   const resumePath = join(root, 'lib/resume.js')
@@ -199,6 +211,31 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'top:groups-capped', /Select-Object -First \$groupLimit/.test(source))
   }
 
+  const orphanScanScript = join(root, 'lib/resources/orphans.ps1')
+  if (await exists(orphanScanScript)) {
+    const source = await readFile(orphanScanScript, 'utf8')
+    check(checks, 'orphans:identity', /QueryFullProcessImageNameW/.test(source) && /GetProcessTimes/.test(source))
+    check(checks, 'orphans:dead-parent', /Test-OrphanProcess/.test(source) && /ContainsKey\(\$parent\)/.test(source))
+    check(checks, 'orphans:install-root', /Test-UnderRoot/.test(source) && /hostStartTicks/.test(source))
+  }
+
+  const orphanKillScript = join(root, 'lib/resources/orphan-kill.ps1')
+  if (await exists(orphanKillScript)) {
+    const source = await readFile(orphanKillScript, 'utf8')
+    check(
+      checks,
+      'orphans:kill-rechecks-creation',
+      /createdTicks/.test(source) && /creation-mismatch/.test(source) && /in-current-tree/.test(source),
+      'the kill helper must refuse a recycled pid instead of guessing',
+    )
+  }
+
+  const pluginMemoryPath = join(root, 'lib/plugin-memory.js')
+  if (await exists(pluginMemoryPath)) {
+    const source = await readFile(pluginMemoryPath, 'utf8')
+    check(checks, 'plugins:pressure-pause', /setPressurePaused\s*\(/.test(source) && /pressure-critical/.test(source))
+  }
+
   const routesPath = join(root, 'lib/routes.js')
   if (await exists(routesPath)) {
     const source = await readFile(routesPath, 'utf8')
@@ -216,6 +253,15 @@ export async function runPreflight({ root = defaultRoot } = {}) {
       'routes:minidump-post',
       source.includes('/api/memory-watchdog.minidump') && /methods:\s*\['POST'\]/.test(source),
       'minidump parsing must be user-triggered, not polled',
+    )
+    check(
+      checks,
+      'routes:orphans-post',
+      source.includes('/api/memory-watchdog.orphans') &&
+        source.includes('/api/memory-watchdog.orphans-kill') &&
+        /scanOrphans/.test(source) &&
+        /killOrphan/.test(source),
+      'orphan detection and its kill must be user-triggered POST routes',
     )
   }
 
@@ -255,7 +301,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     check(checks, 'client:disclosure-gate', client.includes('disclosure6') && client.includes('disclosure7'))
     check(checks, 'client:events-route', client.includes('/api/memory-watchdog.events'))
     check(checks, 'client:resume-route', client.includes('/api/memory-watchdog.resume'))
-    for (const section of ['healthTitle', 'adviceTitle', 'rendererTitle', 'minidumpTitle', 'attributionTitle', 'attributionGroupLabel', 'residentGrowLabel', 'systemTitle', 'crashTitle', 'historyTitle', 'trendTitle', 'resumeTitle', 'copyDiagnostics', 'bundle', 'bundleNote']) {
+    for (const section of ['healthTitle', 'adviceTitle', 'rendererTitle', 'minidumpTitle', 'attributionTitle', 'attributionGroupLabel', 'residentGrowLabel', 'incidentTitle', 'orphanTitle', 'pluginPressurePaused', 'systemTitle', 'crashTitle', 'historyTitle', 'trendTitle', 'resumeTitle', 'copyDiagnostics', 'bundle', 'bundleNote']) {
       check(checks, `client:section:${section}`, client.includes(section), section)
     }
     check(checks, 'client:read-only', !/-HostPid|-MainPid|scriptPath|spawnProcess|-File\s|taskkill|Stop-Process/i.test(client))
@@ -267,6 +313,7 @@ export async function runPreflight({ root = defaultRoot } = {}) {
     // A bundle leaves the machine, so redaction is not optional: fail the gate
     // if the module ever stops routing its payload through redactValue.
     check(checks, 'bundle:redacts', /redactValue\s*\(/.test(source), 'the bundle must pass through redactValue')
+    check(checks, 'bundle:incidents', /INCIDENT_FILE/.test(source), 'incident snapshots belong in the bundle')
   }
 
   for (const script of ['lib/attribution.js', 'lib/system-info.js', 'lib/crash-history.js']) {

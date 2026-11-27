@@ -48,6 +48,9 @@ Every field is volatile, so a change applies immediately without restarting DSH.
   | unknown | missing, invalid or stale (>60 s) samples | three consecutive valid samples leave it by band: `<75%` to normal, a hot band to warning / critical |
 
 - Samples **commit attribution** every 30 seconds: how much of the commit charge the DSH process tree holds, plus a per-program breakdown (expandable to individual pids).
+- Freezes an **incident snapshot** on every warning/critical transition: the commit figures, DSH share and the largest programs as they looked at that moment, so a spike can still be explained later.
+- About 20 seconds after start, checks once for **DSH processes left over from a previous run** (under the install root, outside the current tree, parent chain dead). Detection is read-only; each leftover can be ended by hand.
+- While commit pressure is critical, **automatic plugin heap sampling is paused** and manual sampling/snapshots are refused, so the watchdog does not add pressure; one catch-up sample runs about a minute after recovery.
 - Reads the **pagefile and commit-limit configuration** every 5 minutes and gives read-only advice.
 - Builds a **7-day crash and memory-event timeline** every 10 minutes from DSH crash logs and the Windows System event log.
 - Counts every plugin's registered timers and listeners continuously (no sampling cost); with periodic sampling on, grabs a 20-second heap-allocation window every 15 minutes, ranks plugins by `node_modules/<package>`, and reports per-hour growth plus a leak-risk level. The card can sample on demand, export a `.heapprofile`, or write a heap snapshot.
@@ -72,6 +75,20 @@ Every field is volatile, so a change applies immediately without restarting DSH.
 - Each row expands into that program's individual processes with their commit, uptime and executable path; the expansion lists the eight largest, while the `×N` count is always the real total.
 - Grouping reuses the process names from the same snapshot, so it opens no extra handles and adds no measurable probe time. The trade-off is that **one name is one group**: old and new versions of the same executable (for example a leftover instance after an upgrade) share a row, and the expansion separates them by pid and path.
 - **Restart gate**: by default an automatic restart is only allowed when the DSH process tree holds at least 20% of the commit charge. If the share is lower, or attribution data is missing or older than 60 seconds, the restart is **blocked** (fail closed) and the reason is shown in the card and a toast — once per critical episode, not in a loop. Set `restartGatePct` to 0 to turn the check off.
+
+## Incident snapshots (attribution at the warning/critical transition)
+
+- When pressure crosses into warning or critical, the attribution visible **at that moment** (DSH share, total bytes, top five programs) is written together with the commit figures to `$DSH_HOME/memory-watchdog/incidents.json`. The card lists the last five, ten are kept, and the diagnostics bundle includes them.
+- The attribution probe runs every 30 seconds, so most transitions already have a fresh sample (≤2 minutes) and record it directly. Older samples are marked `stale`, refreshed once in the background and written back to the same entry with a “filled in at” time.
+- A failed refresh does not invent a conclusion: the card says no sample was available at that moment. This is the ranking as seen then, not a precise post-hoc reconstruction.
+- The `incidentSnapshot` switch is on by default; turning it off stops new records, it does not delete the file.
+
+## Leftover processes (remnants of a previous run)
+
+- Killing DSH and reopening it quickly can leave child processes behind. About 20 seconds after start, one scan lists processes whose executable is under the current install root, that are not part of the current tree, were created before this Host, and whose parent chain ends at a **dead pid**.
+- A second, still-running DSH instance is never listed because its parent chain is alive; processes started after this Host are never listed either.
+- Each row shows pid, name, commit, uptime and executable path, and can be ended individually. Detection is read-only; before ending anything the helper re-checks the pid, image name, **exact creation time**, install root and current tree membership, so a recycled pid or a process that joined the tree is skipped.
+- A scan older than 10 minutes is stale: check again before ending anything. The `orphanScan` switch only controls the automatic startup scan (on by default); the manual check in the card always works.
 
 ## Pagefile advice (read-only)
 
@@ -114,6 +131,12 @@ Every host plugin runs inside the same V8 isolate, and Node does not account hea
 - **Four buttons**: "Sample now" grabs one window immediately; "Export heap sample" saves the last full profile as `.heapprofile` (openable in Chrome DevTools' Memory panel); "Heap snapshot" calls `v8.writeHeapSnapshot` for a `.heapsnapshot` (it briefly pauses the Host and the card says so first); "Compare the last two snapshots" reads the `snapshot` section of the latest two files (no edges), aggregates `self_size` by constructor name and lists the ten largest changes, e.g. `Map · 4.0 MiB → 6.0 MiB (+2.0 MiB) · 12 → 18 objects`. Parsing is chunked and streaming, only one comparison runs at a time, and with fewer than two snapshots the card asks you to take them first. Only the latest two snapshots are kept. The "Download diagnostics" button is described under "Diagnostics bundle" below.
 - **Applies immediately**: all five switches are volatile settings and need no DSH restart; turning `pluginMemory` off fully restores the radar and stops sampling.
 - **Reload A/B (0.5.0)**: when the radar sees a plugin's timers and listeners drop to zero (disabled in the plugin manager, or a dev hot reload) it records the moment and compares bytes once the plugin comes back, showing "Reloads observed: N" plus lines like `kept +8.0 MiB (40.0 MiB → 48.0 MiB)`. Coming back to the previous size means that reload was clean; coming back fatter means the plugin leaks across its reload path — the most direct evidence for "reload this plugin or restart DSH".
+
+## Pressure backoff (the watchdog does not add pressure)
+
+- A heap sampling window costs CPU and can raise commit charge (self-monitoring flags a growth above 256 MiB as `intrusive`). While commit pressure is **critical**, automatic sampling windows pause, and manual “sample once”, “export heap profile”, “heap snapshot” and “diff snapshots” return `pressure-critical` (HTTP 409); the card disables those buttons and says why.
+- About a minute after pressure leaves critical, one catch-up sample runs; missed windows are not replayed. Pause count and the pause start are shown in the plugin section.
+- Only heap work that adds commit charge is paused: pressure sampling, attribution, the crash timeline, the diagnostics bundle and minidump header parsing keep running. The `pressureBackoff` switch is on by default.
 
 ## Heap near-limit and external growth
 
@@ -225,6 +248,7 @@ The plugin does **not** guarantee protection from OOM, crashes or data loss, and
 
 - The resident sampling PowerShell process uses about **62–70 MB** working set and **~49 MB** commit in local measurements; sampling runs every 5 seconds and takes about 7 ms per sample.
 - One attribution round takes about **1.9 s** (every 30 s), pagefile info about **1.8 s** (every 5 minutes) and the crash timeline about **1.6 s** (every 10 minutes). All three are short-lived processes that exit when done.
+- The leftover-process scan runs once about 20 seconds after start (manual checks in the card are separate) and is another short-lived PowerShell process; a helper only starts when a kill is actually requested.
 - The helper starts only for an actual handoff and does not stay resident.
 - The plugin-memory radar is plain JS counting and costs next to nothing; allocation sampling only records during the window and aggregates once at the end, so its cost scales with the allocation rate. Writing a `.heapsnapshot` pauses the Host for hundreds of milliseconds to seconds depending on heap size; the card warns first.
 - The 14-day trend rewrites `trend.json` every 10 minutes (hourly buckets and histograms only, never raw samples); the diagnostics bundle is built on demand; the snapshot diff streams both files in 1 MiB chunks and keeps only one node array at a time (1.5 GiB per file, 40 million nodes, 120 s timeout), with one comparison allowed at a time.
@@ -253,6 +277,9 @@ DSH does not currently expose a system notification or tray API to plugins. Noti
 - The renderer heap is a total with no attribution, and it only exists while the page is open — a closed page means "no data". It comes from `performance.memory`, which Chromium documents as an estimate rather than an exact residency figure, so treat it as a trend reference, not a ledger.
 - Crash dump parsing stops at the module and memory-table level: no call stack, no register context, no symbolisation. It says which module crashed and what memory looked like, not which line. DSH does not enable Crashpad today, so on the reference machine this feature usually has no data.
 - Different Windows / DSH launch paths may change the job flags. When the helper self-check finds it runs inside a job, it measures whether a new process can escape that job by starting two no-op children that exit immediately: if the escape works, automatic restart stays available (the card shows which escape was used); if it does not, the check fails closed. No process is ever terminated by this probe. Switching to a taskbar / Explorer launch only helps when that job came from the terminal or agent that started DSH - on the reference machine DSH creates a job for its own process tree, so the launch path changes nothing.
+- Incident snapshots record the attribution sample as it was **at the warning/critical transition**; a sample older than two minutes is marked `stale` and refreshed in the background, so the card never pretends to know who held the memory before the fill-in completes.
+- Leftover detection depends on the parent chain ending at a dead pid: if an old instance was re-parented to a live process by an external tool, or its pid was reused by an unrelated program, it is not listed. This prefers a miss over a wrong kill. Ending is one pid at a time; there is no group action.
+- Pressure backoff pauses heap sampling and snapshots only, not pressure sampling, attribution or the crash timeline, so during critical pressure the card still shows who holds the commit, just not fresh per-plugin allocation attribution.
 - Real-world restarts, different launch paths and long-term stability still need to be verified against the release checklist.
 
 ## Install and uninstall
@@ -285,6 +312,7 @@ Releases are handled by `.github/workflows/release.yml`: pushing `main` or publi
 | `resume.json` | Resume ledger (attempts, handled children, unreadable sessions) |
 | `plugin-memory.json` | Plugin-memory ledger (window series, verdicts, reload A/B, sampling metadata) |
 | `blackbox.json` | Black box: last 12 pressure samples of this run (shown as the previous run's tail after a restart) |
+| `incidents.json` | Incident snapshots: attribution at warning/critical transitions (last 10) |
 | `heap-<time>.heapprofile` | Allocation profile saved by "Export heap sample" |
 | `heap-<time>.heapsnapshot` | V8 heap snapshot written by "Heap snapshot" (latest two kept) |
 | `handoff/<id>/` | Two-phase handoff markers and result |

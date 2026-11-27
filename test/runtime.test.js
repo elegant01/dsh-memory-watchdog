@@ -66,6 +66,7 @@ async function harness(options = {}) {
   const handoff = fakeHandoff(options.handoff)
   const collector = fakeCollector()
   const rawConfig = { autoRestart: options.autoRestart ?? true }
+  rawConfig.orphanScan = options.orphanScan ?? false
   if (options.restartGatePct !== undefined) rawConfig.restartGatePct = options.restartGatePct
   if (options.resumeAfterCrash !== undefined) rawConfig.resumeAfterCrash = options.resumeAfterCrash
   const attributionProbe =
@@ -157,6 +158,8 @@ async function harness(options = {}) {
   if (options.crashpadProbe !== undefined) deps.crashpadProbe = options.crashpadProbe
   if (options.rendererHeap !== undefined) deps.rendererHeap = options.rendererHeap
   if (options.runJson !== undefined) deps.runJson = options.runJson
+  if (options.pluginMemory !== undefined) deps.pluginMemory = options.pluginMemory
+  if (options.orphanProbe !== undefined) deps.orphanProbe = options.orphanProbe
   const rt = new GuardRuntime({
     ctx: { get: () => undefined },
     rawConfig,
@@ -1053,5 +1056,145 @@ test('whole-program kill accepts the already-normalized sample the real probe re
   assert.equal(killed.ok, true)
   assert.equal(killed.killed, 2)
   assert.equal(calls.length, 1)
+  await h.cleanup()
+})
+
+function fakePluginMemory() {
+  const pauses = []
+  return {
+    pauses,
+    async load() {},
+    start() {},
+    async stop() {},
+    setPressurePaused(value) {
+      pauses.push(value === true)
+      return value === true
+    },
+    status() {
+      return {
+        enabled: true,
+        inspector: true,
+        sampling: { enabled: true, pausedByPressure: pauses.at(-1) === true, pressureDefers: 0 },
+        packages: [],
+        reloads: [],
+        radar: {},
+        totals: {},
+        inventory: { count: 0 },
+      }
+    },
+    async sampleNow() {
+      return { ok: true, window: { at: 1, totalBytes: 0 } }
+    },
+  }
+}
+
+test('warning and critical transitions freeze the attribution that was visible', async () => {
+  const h = await harness({ orphanScan: false })
+  h.rt.deps.attributionProbe = async () => ({
+    ok: true,
+    at: h.clock.now,
+    sampledAt: h.clock.now,
+    error: null,
+    systemCommitUsed: 100 * GIB,
+    dshBytes: 40 * GIB,
+    dshCount: 5,
+    sharePct: 40,
+    top: [],
+    groups: [
+      { name: 'chrome.exe', count: 3, bytes: 25 * GIB, dsh: false, dshBytes: 0, members: [] },
+      { name: 'DeepSeek Harness.exe', count: 2, bytes: 40 * GIB, dsh: true, dshBytes: 40 * GIB, members: [] },
+    ],
+  })
+  await h.rt.refreshAttribution()
+  await driveToWarning(h.feed)
+  let status = h.rt.status()
+  assert.equal(status.incidents.length, 1)
+  assert.equal(status.incidents[0].to, 'warning')
+  assert.equal(status.incidents[0].attributionState, 'fresh')
+  assert.equal(status.incidents[0].attribution.groups[0].name, 'DeepSeek Harness.exe')
+
+  await h.feed(96)
+  await h.feed(96)
+  await h.feed(96)
+  status = h.rt.status()
+  assert.equal(status.incidents.length, 2)
+  assert.equal(status.incidents[1].to, 'critical')
+  await h.cleanup()
+})
+
+test('critical pressure pauses plugin sampling and refuses heavy plugin actions', async () => {
+  const pluginMemory = fakePluginMemory()
+  const h = await harness({ pluginMemory, orphanScan: false })
+  await driveToCritical(h.feed)
+  assert.equal(pluginMemory.pauses.at(-1), true)
+  const blocked = await h.rt.samplePlugins()
+  assert.equal(blocked.ok, false)
+  assert.equal(blocked.code, 'pressure-critical')
+  assert.equal((await h.rt.snapshotPlugins()).code, 'pressure-critical')
+  assert.equal((await h.rt.diffSnapshots()).code, 'pressure-critical')
+  const status = h.rt.status()
+  assert.equal(status.backoff.active, true)
+  assert.equal(status.backoff.enabled, true)
+
+  // Back to normal: the pause is lifted.
+  await h.feed(60)
+  await h.feed(60)
+  await h.feed(60)
+  assert.equal(pluginMemory.pauses.at(-1), false)
+  assert.equal(h.rt.status().backoff.active, false)
+  await h.cleanup()
+})
+
+test('a startup orphan scan lists leftovers and kill re-checks the exact identity', async () => {
+  const hclock = makeClock()
+  const items = [
+    {
+      pid: 9001,
+      parentPid: 8000,
+      name: 'DeepSeek Harness.exe',
+      bytes: 2 * GIB,
+      ageMin: 120,
+      exePath: 'E:\\DeepSeek Harness\\DeepSeek Harness.exe',
+      createdAt: '133000000000000000',
+      startedAt: hclock.now - 7200000,
+    },
+  ]
+  const calls = []
+  const runJson = async (options) => {
+    calls.push(options)
+    return { ok: true, value: { ok: true, killed: 1, skipped: 0, failed: 0 } }
+  }
+  const h = await harness({
+    orphanScan: true,
+    runJson,
+    orphanProbe: async () => ({
+      ok: true,
+      rootPath: 'E:\\DeepSeek Harness',
+      hostStartedAt: hclock.now - 60000,
+      scanned: 300,
+      items,
+    }),
+  })
+  const timer = h.timeoutRecords.find((record) => record.ms === 20000)
+  assert.ok(timer, 'startup schedules the orphan scan')
+  timer.fn()
+  await settle()
+  await settle()
+  const status = h.rt.status()
+  assert.equal(status.orphans.count, 1)
+  assert.equal(status.orphans.stale, false)
+  assert.ok(h.rt.notices.some((notice) => notice.code === 'orphan.found' && notice.params.count === 1))
+
+  const unknown = await h.rt.killOrphan(1234)
+  assert.equal(unknown.code, 'unknown-orphan')
+  assert.equal(calls.length, 0)
+
+  const killed = await h.rt.killOrphan(9001)
+  assert.equal(killed.ok, true)
+  assert.equal(killed.killed, 1)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].script.endsWith('orphan-kill.ps1'), true)
+  assert.ok(calls[0].args.join(' ').includes('133000000000000000'), 'the plan carries the exact creation time')
+  assert.ok(h.rt.notices.some((notice) => notice.code === 'orphan.kill'))
   await h.cleanup()
 })

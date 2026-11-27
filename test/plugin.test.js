@@ -409,6 +409,8 @@ test('dispose unregisters the routes, stops the collector and detaches the liste
     '/api/memory-watchdog.events',
     '/api/memory-watchdog.kill',
     '/api/memory-watchdog.minidump',
+    '/api/memory-watchdog.orphans',
+    '/api/memory-watchdog.orphans-kill',
     '/api/memory-watchdog.plugins',
     '/api/memory-watchdog.plugins-export',
     '/api/memory-watchdog.plugins-sample',

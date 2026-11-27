@@ -232,3 +232,37 @@ test('summarizeSamplingCost marks CPU-heavy and commit-growing windows as intrus
   assert.equal(unknown.commitGrowthBytes, null)
   assert.equal(unknown.cpuPct, null)
 })
+test('pressure backoff pauses sampling windows and schedules one catch-up on recovery', async () => {
+  const dir = await makeTempDir()
+  try {
+    const clock = { now: 1_700_000_000_000 }
+    const memory = new PluginMemory({
+      dir: dir.dir,
+      config: { pluginMemory: true, pluginSampling: true, pluginSampleMinutes: 15 },
+      now: () => clock.now,
+      ownPackage: 'dsh-memory-watchdog',
+    })
+    memory.start()
+    assert.ok(memory.nextSampleAt !== null)
+
+    assert.equal(memory.setPressurePaused(true), true)
+    assert.equal(memory.nextSampleAt, null)
+    assert.equal(memory.timer, null)
+    const status = memory.status()
+    assert.equal(status.sampling.pausedByPressure, true)
+
+    const blocked = await memory.sampleNow('schedule')
+    assert.equal(blocked.ok, false)
+    assert.equal(blocked.error, 'pressure-critical')
+    assert.equal(memory.pressureDefers, 1)
+    assert.equal(memory.status().sampling.pressureDefers, 1)
+
+    clock.now += 60000
+    assert.equal(memory.setPressurePaused(false), false)
+    assert.ok(memory.nextSampleAt >= clock.now + 59000, 'recovery schedules a catch-up about a minute out')
+    assert.equal(memory.status().sampling.pausedByPressure, false)
+    await memory.stop()
+  } finally {
+    await dir.cleanup()
+  }
+})
